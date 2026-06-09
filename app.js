@@ -86,9 +86,13 @@
   // ---------- Lese Word/tekst-filer ----------
   async function readDocxXml(buf) {
     const dv = new DataView(buf), u8 = new Uint8Array(buf);
+    if (buf.byteLength < 22) throw new Error("Dette ser ikke ut som en gyldig Word-fil (.docx).");
     let eocd = -1;
     const min = Math.max(0, buf.byteLength - 22 - 65535);
-    for (let i = buf.byteLength - 22; i >= min; i--) { if (dv.getUint32(i, true) === 0x06054b50) { eocd = i; break; } }
+    for (let i = buf.byteLength - 22; i >= min; i--) {
+      // krev gyldig EOCD-signatur OG at kommentarlengden stemmer (unngå falsk treff i arkivkommentar)
+      if (dv.getUint32(i, true) === 0x06054b50 && i + 22 + dv.getUint16(i + 20, true) === buf.byteLength) { eocd = i; break; }
+    }
     if (eocd < 0) throw new Error("Dette ser ikke ut som en gyldig Word-fil (.docx).");
     const cdCount = dv.getUint16(eocd + 10, true);
     let p = dv.getUint32(eocd + 16, true), target = null;
@@ -105,9 +109,12 @@
       p += 46 + nameLen + extraLen + commentLen;
     }
     if (!target) throw new Error("Fant ikke teksten inne i Word-fila.");
+    if (target.localOff + 30 > buf.byteLength || dv.getUint32(target.localOff, true) !== 0x04034b50)
+      throw new Error("Word-fila ser ut til å være skadet.");
     const lhNameLen = dv.getUint16(target.localOff + 26, true);
     const lhExtraLen = dv.getUint16(target.localOff + 28, true);
     const dataStart = target.localOff + 30 + lhNameLen + lhExtraLen;
+    if (dataStart + target.compSize > buf.byteLength) throw new Error("Word-fila ser ut til å være skadet.");
     const data = u8.subarray(dataStart, dataStart + target.compSize);
     if (target.method === 0) return new TextDecoder("utf-8").decode(data);
     if (target.method === 8) {
@@ -177,11 +184,17 @@
     });
     return parasToChapters(paras);
   }
+  function assertSupported(file) {
+    if (/\.doc$/i.test(file.name))
+      throw new Error("Gammelt Word-format (.doc) støttes ikke. Åpne fila i Word og lagre som .docx, eller lim inn teksten direkte.");
+  }
   async function fileToChapters(file) {
+    assertSupported(file);
     if (/\.docx$/i.test(file.name)) return parasToChapters(await docxToParas(await file.arrayBuffer()));
     return textToChapters(await file.text());
   }
   async function fileToParagraphs(file) {
+    assertSupported(file);
     if (/\.docx$/i.test(file.name)) return (await docxToParas(await file.arrayBuffer())).map(p => p.text).filter(Boolean);
     return (await file.text()).replace(/\r/g, "").split(/\n\s*\n/).map(b => b.trim()).filter(Boolean);
   }
@@ -212,18 +225,22 @@
       if (!paras.length) throw new Error("Fant ingen tekst i fila.");
       const targets = [];
       store.source.chapters.forEach((c, k) => c.segments.forEach(s => { if (PROSE.includes(s.type)) targets.push({ k, seg: s }); }));
-      const hadExisting = Object.keys(store.translations).length;
-      if (hadExisting && !confirm("Dette legger den norske teksten på rad nedover og kan overskrive det som alt står. Fortsette?")) return;
+      const had = Object.keys(store.translations).length > 0;
+      const msg = `Dette legger ${paras.length} avsnitt fra den norske fila på rad over de ${targets.length} feltene i originalen.` +
+        (paras.length !== targets.length ? "\n\nMERK: antallet er ulikt, så noen avsnitt kan havne forskjøvet – du må kanskje rette enkelte felt etterpå." : "") +
+        (had ? "\n\nDen ERSTATTER den norske teksten som alt ligger der (ta gjerne sikkerhetskopi først)." : "") +
+        "\n\nFortsette?";
+      if (!confirm(msg)) return;
+      // Ren erstatning – ingen gammel tekst blir liggende igjen i halen
+      store.translations = {}; store.links = {}; store.uncertain = {};
       const n = Math.min(paras.length, targets.length);
       for (let i = 0; i < n; i++) {
         const { k, seg } = targets[i];
         if (!store.translations[k]) store.translations[k] = {};
         store.translations[k][seg.id] = paras[i];
       }
-      store.links = {};
-      save(); closeOverlays(); renderAll();
-      alert(`La inn ${n} avsnitt.\nDen norske fila hadde ${paras.length} avsnitt; originalen har ${targets.length} felt.` +
-        (paras.length !== targets.length ? "\n\nTallene er ulike, så sjekk gjerne at avsnittene står på rett plass – du kan flytte/rette i hvert felt." : ""));
+      save(); closeOverlays(); renderAll(); updateUncCount();
+      alert(`Ferdig: la inn ${n} avsnitt.`);
     } catch (err) {
       alert("Klarte ikke å lese fila: " + err.message);
     }
@@ -294,13 +311,17 @@
       ta.className = "editbox"; ta.value = noText; ta.placeholder = "Skriv eller lim inn norsk her …";
       const row = document.createElement("div"); row.className = "editrow";
       const ok = document.createElement("button"); ok.className = "btn primary"; ok.textContent = "Lagre";
-      const cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Avbryt";
-      ok.onclick = () => commitEdit(seg.id, ta.value);
-      cancel.onclick = () => { editingSeg = null; renderChapter(); };
+      const cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Angre endring";
+      let done = false;
+      const finish = (saveIt) => { if (done) return; done = true; if (saveIt) commitEdit(seg.id, ta.value); else { editingSeg = null; renderChapter(); } };
+      ok.onclick = () => finish(true);
+      cancel.onclick = () => finish(false);
       ta.addEventListener("keydown", (e) => {
-        if (e.key === "Escape") { editingSeg = null; renderChapter(); }
-        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) commitEdit(seg.id, ta.value);
+        if (e.key === "Escape") finish(false);
+        if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) finish(true);
       });
+      // Klikker du bort uten å trykke noe, lagres teksten automatisk (ingen tap)
+      ta.addEventListener("blur", () => finish(true));
       row.appendChild(ok); row.appendChild(cancel);
       card.appendChild(ta); card.appendChild(row);
       setTimeout(() => { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }, 0);
@@ -331,7 +352,8 @@
   function renderChapter() {
     const c = chapter();
     document.getElementById("enTitle").textContent = c.title;
-    document.getElementById("noTitle").textContent = getNo(0) || "—";
+    const titleSeg = c.segments.find(s => s.type === "title");
+    document.getElementById("noTitle").textContent = (titleSeg && getNo(titleSeg.id)) || "—";
     sel.value = ci;
     grid.innerHTML = "";
     for (const seg of c.segments) { grid.appendChild(makeCard("en", seg)); grid.appendChild(makeCard("no", seg)); }
@@ -438,7 +460,7 @@
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", "authorization": "Bearer " + s.keys.openai },
-        body: JSON.stringify({ model: s.models.openai || "gpt-4o", max_tokens: 800, messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
+        body: JSON.stringify({ model: s.models.openai || "gpt-4o", messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
@@ -475,7 +497,11 @@
     const { sys, user } = buildPrompts(lookupCtx);
     const loading = document.createElement("div"); loading.className = "lookup-result"; loading.textContent = "Henter svar fra " + PROV_NAME[prov] + " …";
     document.getElementById("lookupBody").appendChild(loading);
-    try { const text = await callProvider(prov, sys, user); loading.remove(); appendLookupResult(prov, text, false); }
+    try {
+      const text = await callProvider(prov, sys, user); loading.remove();
+      if (text) appendLookupResult(prov, text, false);
+      else appendLookupResult(prov, "AI-en ga ikke noe svar denne gangen (kan skyldes innholdsfilter, eller at svaret ble for langt). Prøv igjen, en annen AI, eller bruk «❓ Usikre → Kopier».", true);
+    }
     catch (err) { loading.remove(); appendLookupResult(prov, err.message + "\n\n(Sjekk nøkkel/modell under ⚙︎, eller bruk «❓ Usikre → Kopier» for å spørre i en vanlig chat.)", true); }
   }
   function openLookup() {
@@ -491,6 +517,7 @@
     if (!anyKey) { appendLookupResult(store.settings.provider, "Du har ikke lagt inn noen AI-nøkkel ennå. Åpne ⚙︎ (tannhjulet) og legg inn minst én – Claude, ChatGPT eller Gemini.", true); return; }
     const def = store.settings.provider;
     if (store.settings.keys[def]) runLookup(def);
+    else appendLookupResult(def, `Standard-AI-en (${PROV_NAME[def]}) mangler nøkkel. Trykk en av de aktive knappene øverst, eller legg inn nøkkel under ⚙︎.`, true);
   }
   document.querySelectorAll(".lookup-providers .btn").forEach(b => b.onclick = () => runLookup(b.dataset.prov));
   document.getElementById("lookupClose").onclick = closeOverlays;
@@ -623,20 +650,35 @@
     const blob = JSON.stringify({ source: store.source, translations: store.translations, links: store.links, uncertain: store.uncertain }, null, 2);
     download("oversettelse-sikkerhetskopi.json", blob, "application/json");
   };
+  function validSource(src) {
+    if (src == null) return true;
+    if (typeof src !== "object" || !Array.isArray(src.chapters) || !src.chapters.length) return false;
+    return src.chapters.every(c => c && Array.isArray(c.segments));
+  }
   document.getElementById("importJson").onclick = () => importFile.click();
   importFile.onchange = (e) => {
     const f = e.target.files[0]; if (!f) return;
     const r = new FileReader();
     r.onload = () => {
+      let obj;
+      try { obj = JSON.parse(r.result); } catch (err) { alert("Klarte ikke å lese fila: ugyldig format."); return; }
+      if (!obj || typeof obj !== "object" || !validSource(obj.source)) {
+        alert("Sikkerhetskopien ser skadet ut (mangler gyldig dokumentstruktur). Ingen endring gjort."); return;
+      }
+      const snapshot = JSON.stringify(store);
       try {
-        const obj = JSON.parse(r.result);
-        if (obj.source) store.source = obj.source;
+        store.source = obj.source || null;
+        if (store.source) store.source.chapters.forEach(c => c.segments.forEach((s, i) => (s.id = i))); // re-indekser defensivt
         store.translations = obj.translations || {};
         store.links = obj.links || {};
         store.uncertain = obj.uncertain || {};
-        ci = 0; save(); closeOverlays(); renderAll(); updateUncCount();
+        ci = 0; active = null; editingSeg = null;
+        renderAll(); updateUncCount(); save(); closeOverlays();
         alert("Sikkerhetskopi hentet inn.");
-      } catch (err) { alert("Klarte ikke å lese fila: " + err.message); }
+      } catch (err) {
+        store = JSON.parse(snapshot); ci = 0; renderAll(); updateUncCount();
+        alert("Klarte ikke å bruke sikkerhetskopien: " + err.message);
+      }
     };
     r.readAsText(f); e.target.value = "";
   };
@@ -660,7 +702,8 @@
   // ---------- Hjelpere ----------
   function openOverlay(id) { closeOverlays(); document.getElementById(id).classList.add("show"); }
   function closeOverlays() { document.querySelectorAll(".overlay.show").forEach(o => o.classList.remove("show")); }
-  document.querySelectorAll(".overlay").forEach(o => o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }));
+  // Klikk på mørk bakgrunn lukker – men ikke oppslagsvinduet (så et AI-svar ikke mistes ved feilklikk)
+  document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { closeOverlays(); if (active) { active = null; updateHighlights(); } }
     if (editingSeg !== null || !hasSource()) return;
@@ -684,7 +727,18 @@
     catch (e) { return false; }
   }
 
+  // Lagre umiddelbart hvis siden lukkes (debounce-vinduet kan ellers svelge siste endring)
+  window.addEventListener("beforeunload", () => {
+    clearTimeout(saveTimer);
+    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+  });
+
   // ---------- Start ----------
-  renderAll(); updateUncCount();
+  try { renderAll(); }
+  catch (err) {                              // skadet lagret tilstand skal ikke låse appen
+    store.source = null; save();
+    try { renderAll(); } catch (e2) {}
+  }
+  updateUncCount();
   if (!store.seenHelp) { openOverlay("helpOverlay"); store.seenHelp = true; save(); }
 })();

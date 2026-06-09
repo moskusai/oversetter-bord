@@ -140,7 +140,7 @@ textarea.editbox {
   font-size: 13px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--line);
   background: #fff; cursor: pointer; color: var(--muted);
 }
-.col.no .card:hover .editbtn { opacity: 1; }
+.card.no:hover .editbtn { opacity: 1; }
 
 /* ---------- Handlingslinje (nederst) ---------- */
 .actionbar {
@@ -217,9 +217,11 @@ button.btn.danger:hover { background: #fbeee9; }
 .lookup-providers .btn[disabled] { opacity: .4; cursor: not-allowed; }
 .lookup-result .head .tagprov { display: inline-block; margin-left: 6px; font-size: 10px; padding: 1px 6px; border-radius: 999px; background: #efe7da; color: var(--en); letter-spacing: .4px; }
 
-/* Smal skjerm */
+/* Smal skjerm / mobil – stable engelsk og norsk i én kolonne */
 @media (max-width: 820px) {
-  main { grid-template-columns: 1fr; }
-  .col.en { border-right: none; border-bottom: 2px solid var(--line); }
-  .colhead { position: static; }
+  .grid { grid-template-columns: 1fr; }
+  .gridhead { grid-template-columns: 1fr; }
+  .colhead.en { border-right: none; border-bottom: 1px solid var(--line); }
+  .card.en { border-left: 3px solid #e0c7a8; }
+  .card.no { border-left: 3px solid #b9d8c8; }
 }
