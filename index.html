@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="nb">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Oversetter-bord</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header>
+  <h1 id="appTitle">Oversetter-bord <small>engelsk → norsk</small></h1>
+  <div class="chapnav" id="chapnav">
+    <button class="btn iconbtn" id="prevCh" title="Forrige del">‹</button>
+    <select id="chapterSelect" aria-label="Velg del"></select>
+    <button class="btn iconbtn" id="nextCh" title="Neste del">›</button>
+  </div>
+  <span class="progress" id="progress"></span>
+  <div class="spacer"></div>
+  <button class="btn" id="uncertainBtn" title="Ord du har merket som usikre">❓ Usikre <span id="uncCount"></span></button>
+  <button class="btn" id="helpBtn" title="Slik bruker du appen">?</button>
+  <button class="btn" id="settingsBtn" title="Innstillinger / AI-nøkler">⚙︎</button>
+  <button class="btn" id="menuBtn" title="Filer, opplasting og lagring">≡ Fil</button>
+</header>
+
+<!-- Tom-tilstand: ingen original lastet opp -->
+<div class="empty-state" id="emptyState">
+  <div class="es-card">
+    <h2>Velkommen til oversetter-bordet</h2>
+    <p>Last opp den <b>engelske originalen</b> (Word-fil eller tekstfil), så får du den på venstre side. Deretter kan du skrive eller lime inn den norske oversettelsen på høyre side – eller laste opp en ferdig oversettelse som fil.</p>
+    <div class="es-buttons">
+      <button class="btn primary big" id="esUploadEn">📄 Last opp engelsk original</button>
+      <button class="btn big" id="esUploadNo">🇳🇴 Last opp norsk oversettelse</button>
+    </div>
+    <p class="muted-note">Filene blir liggende bare i din egen nettleser – ingenting sendes ut. Støtter Word (.docx) og tekst (.txt / .md).</p>
+  </div>
+</div>
+
+<main id="mainArea" style="display:none">
+  <div class="gridhead">
+    <div class="colhead en">
+      <span class="tag">Engelsk – original</span>
+      <h2 id="enTitle"></h2>
+    </div>
+    <div class="colhead no">
+      <span class="tag">Norsk – oversettelse</span>
+      <h2 id="noTitle"></h2>
+      <div class="spacer"></div>
+      <button class="btn" id="pasteChapter" title="Lim inn hele delens oversettelse på én gang">📋 Lim inn del</button>
+    </div>
+  </div>
+  <div id="grid" class="grid"></div>
+</main>
+
+<!-- Handlingslinje for valgt ord -->
+<div class="actionbar" id="actionbar">
+  <span class="sel" id="abSel"></span>
+  <button class="go" id="abLookup">🔍 Slå opp ord (AI)</button>
+  <button class="warn" id="abUncertain">❓ Merk usikker</button>
+  <button id="abUnlink" style="display:none">✂︎ Fjern kobling</button>
+  <span class="hint" id="abHint"></span>
+  <button id="abClose" title="Lukk">✕</button>
+</div>
+
+<!-- Innstillinger -->
+<div class="overlay" id="settingsOverlay">
+  <div class="modal">
+    <h3>AI-innstillinger</h3>
+    <p class="sub">For å slå opp enkeltord trenger appen en nøkkel til minst én AI-tjeneste. Du legger inn dine egne nøkler – de lagres <b>bare</b> i din egen nettleser, og brukes bare når du trykker «Slå opp ord» (aldri på hele teksten).</p>
+
+    <label>Hvilken AI vil du bruke som standard?</label>
+    <select id="providerSelect">
+      <option value="anthropic">Claude (Anthropic)</option>
+      <option value="openai">ChatGPT (OpenAI)</option>
+      <option value="gemini">Gemini (Google)</option>
+    </select>
+
+    <div class="prov-block">
+      <label>Claude – API-nøkkel</label>
+      <input type="password" id="anthropicKey" placeholder="sk-ant-...">
+      <label>Claude – modell</label>
+      <select id="anthropicModel">
+        <option value="claude-opus-4-8">Opus 4.8 – best kvalitet</option>
+        <option value="claude-sonnet-4-6">Sonnet 4.6 – rask og god</option>
+        <option value="claude-haiku-4-5">Haiku 4.5 – raskest og billigst</option>
+      </select>
+    </div>
+
+    <div class="prov-block">
+      <label>ChatGPT – API-nøkkel</label>
+      <input type="password" id="openaiKey" placeholder="sk-...">
+      <label>ChatGPT – modell</label>
+      <input type="text" id="openaiModel" placeholder="gpt-4o">
+    </div>
+
+    <div class="prov-block">
+      <label>Gemini – API-nøkkel</label>
+      <input type="password" id="geminiKey" placeholder="AIza...">
+      <label>Gemini – modell</label>
+      <input type="text" id="geminiModel" placeholder="gemini-2.0-flash">
+    </div>
+
+    <p class="muted-note">💡 DeepL kan dessverre ikke kobles direkte fra nettleseren (DeepL blokkerer det). Vil du ha DeepL i tillegg, si fra – da setter jeg opp en liten ekstra hjelper for det.</p>
+
+    <div class="actions">
+      <button class="btn" id="settingsCancel">Lukk</button>
+      <button class="btn primary" id="settingsSave">Lagre</button>
+    </div>
+  </div>
+</div>
+
+<!-- Lim inn hele delen -->
+<div class="overlay" id="pasteOverlay">
+  <div class="modal">
+    <h3>Lim inn oversettelse for hele delen</h3>
+    <p class="sub">Lim inn den norske teksten (f.eks. fra DeepL eller ChatGPT). Hvert avsnitt – atskilt med en tom linje – legges på riktig plass nedover. Du kan finjustere hvert avsnitt etterpå.</p>
+    <textarea id="pasteText" placeholder="Lim inn her …"></textarea>
+    <p class="muted-note" id="pasteCount"></p>
+    <div class="actions">
+      <button class="btn" id="pasteCancel">Avbryt</button>
+      <button class="btn primary" id="pasteApply">Sett inn</button>
+    </div>
+  </div>
+</div>
+
+<!-- Usikre ord -->
+<div class="overlay" id="uncertainOverlay">
+  <div class="modal">
+    <h3>Ord du er usikker på</h3>
+    <p class="sub">Her samles ord du har merket. Trykk «Kopier» og lim inn i en samtale med ChatGPT, Claude eller Gemini – så får du dem sjekket. Eller bruk «Slå opp ord» direkte i teksten hvis du har lagt inn en nøkkel.</p>
+    <div id="uncertainList"></div>
+    <div class="actions">
+      <button class="btn" id="uncCopy">📋 Kopier (til ChatGPT/Claude/Gemini)</button>
+      <button class="btn" id="uncClose">Lukk</button>
+    </div>
+  </div>
+</div>
+
+<!-- Oppslagsresultat -->
+<div class="overlay" id="lookupOverlay">
+  <div class="modal">
+    <h3 id="lookupTitle">Oppslag</h3>
+    <p class="sub" id="lookupSub"></p>
+    <div class="lookup-providers">
+      <span class="lp-label">Spør:</span>
+      <button class="btn" data-prov="anthropic" id="lpAnthropic">Claude</button>
+      <button class="btn" data-prov="openai" id="lpOpenai">ChatGPT</button>
+      <button class="btn" data-prov="gemini" id="lpGemini">Gemini</button>
+    </div>
+    <div id="lookupBody"></div>
+    <div class="actions">
+      <button class="btn" id="lookupClose">Lukk</button>
+    </div>
+  </div>
+</div>
+
+<!-- Fil-meny -->
+<div class="overlay" id="menuOverlay">
+  <div class="modal">
+    <h3>Filer og lagring</h3>
+    <p class="sub">Arbeidet ditt lagres automatisk i nettleseren. Her laster du opp tekst og tar sikkerhetskopi.</p>
+    <div style="display:flex;flex-direction:column;gap:10px">
+      <button class="btn" id="uploadEn">📄 Last opp engelsk original (Word/tekst)</button>
+      <button class="btn" id="uploadNo">🇳🇴 Last opp norsk oversettelse (Word/tekst)</button>
+      <hr style="border:none;border-top:1px solid var(--line);margin:6px 0">
+      <button class="btn" id="exportText">📄 Eksporter ferdig norsk tekst</button>
+      <button class="btn" id="exportJson">💾 Lagre sikkerhetskopi (fil)</button>
+      <button class="btn" id="importJson">📂 Hent sikkerhetskopi (fil)</button>
+      <button class="btn danger" id="clearAll">🗑 Tøm og start på nytt</button>
+      <input type="file" id="enFile" accept=".docx,.txt,.md,text/plain" style="display:none">
+      <input type="file" id="noFile" accept=".docx,.txt,.md,text/plain" style="display:none">
+      <input type="file" id="importFile" accept="application/json,.json" style="display:none">
+    </div>
+    <p class="muted-note" id="menuStats" style="margin-top:14px"></p>
+    <div class="actions">
+      <button class="btn" id="menuClose">Lukk</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hjelp -->
+<div class="overlay" id="helpOverlay">
+  <div class="modal">
+    <h3>Slik bruker du appen</h3>
+    <p class="sub">Engelsk original til venstre, din norske oversettelse til høyre. Alt du gjør lagres automatisk i din egen nettleser.</p>
+    <div class="muted-note" style="font-size:14.5px;line-height:1.7">
+      <p><b>📄 Kom i gang:</b> Last opp den engelske originalen under «≡ Fil → Last opp engelsk original». Vil du, kan du også laste opp en ferdig norsk oversettelse som egen fil – den legges på rad ved siden av.</p>
+      <p><b>✍️ Skrive / lime inn norsk:</b> Klikk på et tomt norsk felt (eller dobbeltklikk teksten) for å skrive eller lime inn – f.eks. fra DeepL eller ChatGPT. Hele delen på én gang: «📋 Lim inn del».</p>
+      <p><b>👆 Finne igjen et ord:</b> Klikk et ord – da lyser det tilsvarende avsnittet opp på den andre siden. Virker begge veier.</p>
+      <p><b>🔗 Koble ord sammen:</b> Klikk først et ord på den ene siden, så ordet som hører til på den andre. De får samme farge og lyser opp hverandre.</p>
+      <p><b>❓ Usikker på et ord?</b> Klikk ordet → «Merk usikker». Alle merkede ord samles under «❓ Usikre». Derfra kan du kopiere dem til ChatGPT/Claude/Gemini, eller trykke «🔍 Slå opp ord» direkte (krever en nøkkel under ⚙︎).</p>
+      <p><b>💾 Trygt lagret:</b> Under «≡ Fil» tar du sikkerhetskopi, henter fram igjen, og eksporterer den ferdige norske teksten.</p>
+    </div>
+    <div class="actions">
+      <button class="btn primary" id="helpClose">Skjønner!</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
