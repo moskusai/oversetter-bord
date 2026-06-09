@@ -514,13 +514,13 @@
     try { const j = await res.json(); m = (j.error && (j.error.message || j.error)) || m; } catch (e) {}
     return new Error(typeof m === "string" ? m : JSON.stringify(m));
   }
-  async function callProvider(prov, sys, user) {
+  async function callProvider(prov, sys, user, maxTokens) {
     const s = store.settings;
     if (prov === "anthropic") {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": s.keys.anthropic, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
-        body: JSON.stringify({ model: s.models.anthropic || "claude-opus-4-8", max_tokens: 800, system: sys, messages: [{ role: "user", content: user }] }),
+        body: JSON.stringify({ model: s.models.anthropic || "claude-opus-4-8", max_tokens: maxTokens || 800, system: sys, messages: [{ role: "user", content: user }] }),
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
@@ -629,6 +629,64 @@
     closeOverlays(); renderChapter();
   };
   document.getElementById("pasteCancel").onclick = closeOverlays;
+
+  // ---------- Forbedre kapittelet med AI ----------
+  function chapterProse() { return chapter().segments.filter(s => PROSE.includes(s.type)); }
+  function chapterBodies() { return chapter().segments.filter(s => s.type === "body"); }
+  function btnFlash(btn, ok) { const o = btn.textContent; btn.textContent = ok ? "✓ Kopiert!" : "Kunne ikke kopiere"; setTimeout(() => { btn.textContent = o; }, 1500); }
+  function buildOptimizePrompt() {
+    const bodies = chapterBodies();
+    const sys = "Du er en dyktig norsk oversetter som forbedrer oversettelser av en barnebibel. Svar bare med selve teksten, ingen forklaring.";
+    let user = "Nedenfor er et kapittel fra en barnebibel. For hvert avsnitt står den engelske originalen (EN) og en norsk oversettelse (NO).\n\n" +
+      "Forbedre den NORSKE oversettelsen så den blir naturlig, korrekt og fin å lese høyt for barn – behold betydningen og NØYAKTIG samme antall avsnitt.\n\n" +
+      "Svar med KUN den forbedrede norske teksten: ett avsnitt om gangen, med én tom linje mellom hvert avsnitt, i samme rekkefølge. Ikke ta med engelsk, ingen avsnittsnummer, ikke noe annet.\n\n" +
+      `=== ${chapter().title} ===\n\n`;
+    bodies.forEach((s, i) => { user += `[${i + 1}]\nEN: ${s.en}\nNO: ${getNo(s.id) || "(mangler)"}\n\n`; });
+    return { sys, user, bodies };
+  }
+  function applyOptimized(text) {
+    const paras = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    const bodies = chapterBodies();
+    const n = Math.min(paras.length, bodies.length);
+    for (let i = 0; i < n; i++) { setNo(bodies[i].id, paras[i]); setSegLinks(bodies[i].id, []); }
+    closeOverlays(); renderChapter();
+    if (paras.length !== bodies.length)
+      alert(`Satt inn ${n} avsnitt. AI-svaret hadde ${paras.length}, kapittelet har ${bodies.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
+  }
+  const optPaste = document.getElementById("optPaste");
+  function updateOptCount() {
+    const paras = optPaste.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    document.getElementById("optCount").textContent = optPaste.value.trim()
+      ? `${paras.length} avsnitt i svaret · kapittelet har ${chapterBodies().length} brødtekst-avsnitt.` : "";
+  }
+  document.getElementById("optimizeBtn").onclick = () => {
+    optPaste.value = ""; updateOptCount();
+    const def = store.settings.provider;
+    const hasKey = store.settings.keys[def];
+    const row = document.getElementById("optApiRow");
+    row.style.display = hasKey ? "" : "none";
+    document.getElementById("optProvName").textContent = PROV_NAME[def] || "";
+    document.getElementById("optFetchStatus").textContent = "";
+    openOverlay("optimizeOverlay");
+  };
+  document.getElementById("optCopyAI").onclick = (e) => { const { user } = buildOptimizePrompt(); copyText(user).then(ok => btnFlash(e.target, ok)); };
+  document.getElementById("optCopyEn").onclick = (e) => { copyText(chapterProse().map(s => s.en).join("\n\n")).then(ok => btnFlash(e.target, ok)); };
+  document.getElementById("optCopyNo").onclick = (e) => { copyText(chapterProse().map(s => getNo(s.id) || "").join("\n\n").trim()).then(ok => btnFlash(e.target, ok)); };
+  optPaste.addEventListener("input", updateOptCount);
+  document.getElementById("optApply").onclick = () => { if (optPaste.value.trim()) applyOptimized(optPaste.value); else closeOverlays(); };
+  document.getElementById("optClose").onclick = closeOverlays;
+  document.getElementById("optFetch").onclick = async () => {
+    const def = store.settings.provider;
+    if (!store.settings.keys[def]) { openOverlay("settingsOverlay"); return; }
+    const status = document.getElementById("optFetchStatus");
+    status.textContent = "Henter fra " + PROV_NAME[def] + " …";
+    const { sys, user } = buildOptimizePrompt();
+    try {
+      const text = await callProvider(def, sys, user, 8000);
+      optPaste.value = text || ""; updateOptCount();
+      status.textContent = text ? "Hentet – se gjennom og trykk «Sett inn forbedret norsk»." : "AI-en ga tomt svar. Prøv igjen.";
+    } catch (err) { status.textContent = "Feil: " + err.message; }
+  };
 
   // ---------- Innstillinger ----------
   document.getElementById("settingsBtn").onclick = () => {

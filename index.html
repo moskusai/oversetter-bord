@@ -46,6 +46,7 @@
       <span class="tag">Norsk – oversettelse</span>
       <h2 id="noTitle"></h2>
       <div class="spacer"></div>
+      <button class="btn" id="optimizeBtn" title="Bruk ChatGPT/Gemini/Claude til å forbedre oversettelsen for hele kapittelet">🤖 Forbedre med AI</button>
       <button class="btn" id="pasteChapter" title="Lim inn hele delens oversettelse på én gang">📋 Lim inn del</button>
     </div>
   </div>
@@ -179,6 +180,36 @@
   </div>
 </div>
 
+<!-- Forbedre med AI -->
+<div class="overlay" id="optimizeOverlay">
+  <div class="modal">
+    <h3>Forbedre kapittelet med AI</h3>
+    <p class="sub">Få ChatGPT, Gemini eller Claude til å pusse på den norske oversettelsen for hele dette kapittelet.</p>
+    <div class="muted-note" style="margin-bottom:14px;line-height:1.7">
+      <b>Slik gjør du:</b><br>
+      1. Trykk <b>«Kopier for AI-forbedring»</b> – engelsk + norsk for kapittelet kopieres med en ferdig instruks.<br>
+      2. Lim inn i ChatGPT, Gemini eller Claude og send.<br>
+      3. Kopier svaret og lim det inn i feltet nederst → <b>«Sett inn forbedret norsk»</b>.
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn primary" id="optCopyAI">📋 Kopier for AI-forbedring</button>
+      <button class="btn" id="optCopyEn">📋 Kopier kun engelsk</button>
+      <button class="btn" id="optCopyNo">📋 Kopier kun norsk</button>
+    </div>
+    <div id="optApiRow" style="margin-bottom:12px;display:none">
+      <button class="btn" id="optFetch">🤖 Eller hent forbedring direkte fra <span id="optProvName"></span></button>
+      <span class="muted-note" id="optFetchStatus" style="margin-left:8px"></span>
+    </div>
+    <label>Lim inn den forbedrede norske teksten her</label>
+    <textarea id="optPaste" placeholder="Lim inn AI-svaret …"></textarea>
+    <p class="muted-note" id="optCount"></p>
+    <div class="actions">
+      <button class="btn" id="optClose">Lukk</button>
+      <button class="btn primary" id="optApply">Sett inn forbedret norsk</button>
+    </div>
+  </div>
+</div>
+
 <!-- Hjelp -->
 <div class="overlay" id="helpOverlay">
   <div class="modal">
@@ -191,6 +222,7 @@
       <p><b>🔗 Koble ord sammen:</b> Klikk først et ord på den ene siden, så ordet som hører til på den andre. De får samme farge og lyser opp hverandre.</p>
       <p><b>↧ 🗑 Får du det ikke til å gå opp?</b> Hold musa over et norsk felt – da dukker små knapper opp. <b>↧</b> setter inn en tom linje og skyver den norske teksten nedover; <b>🗑</b> fjerner en linje og skyver oppover. Slik dytter du oversettelsen på plass når den har forskjøvet seg.</p>
       <p><b>❓ Usikker på et ord?</b> Klikk ordet → «Merk usikker». Alle merkede ord samles under «❓ Usikre». Derfra kan du kopiere dem til ChatGPT/Claude/Gemini, eller trykke «🔍 Slå opp ord» direkte (krever en nøkkel under ⚙︎). Knappen «📋 Kopier (m/ original)» kopierer både den engelske originalen og ditt norske forslag, klart til å lime inn i en AI-chat.</p>
+      <p><b>🤖 Forbedre med AI:</b> Knappen «🤖 Forbedre med AI» (over norsk-kolonnen) kopierer hele kapittelet – engelsk + norsk – med en ferdig instruks. Lim inn i ChatGPT/Gemini/Claude, og lim svaret tilbake. Der kan du også kopiere kun engelsk eller kun norsk for hele kapittelet.</p>
       <p><b>💾 Trygt lagret:</b> Under «≡ Fil» tar du sikkerhetskopi, henter fram igjen, og eksporterer den ferdige norske teksten.</p>
     </div>
     <div class="actions">
