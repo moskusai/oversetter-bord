@@ -145,6 +145,7 @@
   async function docxToParas(buf) { return parseDocxXml(await readDocxXml(buf)); }
 
   function isHeading1(s) { return s && (/(heading|overskrift)\s*1(\b|[^0-9])/i.test(s) || /^(title|tittel)$/i.test(s)); }
+  function isHeading2(s) { return s && /(heading|overskrift)\s*2(\b|[^0-9])/i.test(s); }
   function isHeading(s) { return s && /(heading|overskrift|title|tittel)/i.test(s); }
   const SENT_END = /[.!?:"”’'…)»]$/;
   function endsSentence(s) { return SENT_END.test(s.trim()); }
@@ -153,18 +154,31 @@
     if (!m) return true;                      // starter med tegn/tall
     return m[0].toLowerCase() === m[0] && m[0].toUpperCase() !== m[0]; // liten forbokstav
   }
-  // Bygger kapitler. Slår sammen brødtekst-linjer som er delt midt i en setning
-  // (vanlig i bøker med spaltebrudd), og hopper over rene sidetall.
+  function looksLetterspaced(t) {             // f.eks. "T H E  B O O K"
+    const k = t.split(/\s+/).filter(Boolean);
+    if (k.length < 3) return false;
+    return k.filter(x => x.length === 1).length / k.length > 0.55;
+  }
+  function despace(t) { return /\S {2,}\S/.test(t) ? t.split(/ {2,}/).map(w => w.replace(/ /g, "")).join(" ") : t; }
+  function cleanLabel(s) { s = despace(s).trim(); return s ? s.charAt(0).toUpperCase() + s.slice(1) : s; }
+
+  // Bygger kapitler. Dropper forord/kolofon foran første kapittel, slår sammen
+  // brødtekst-linjer delt midt i en setning, hopper over sidetall, rydder bort
+  // spredte fotnoter, og merker testament-skille (Overskrift2) for gruppering.
   function parasToChapters(paras) {
-    const chapters = []; let cur = null, bodyBuf = "";
+    const firstH1 = paras.findIndex(p => p.text && isHeading1(p.style));
+    const used = firstH1 >= 0 ? paras.slice(firstH1) : paras;
+    const chapters = []; let cur = null, bodyBuf = "", section = "";
     function flushBody() { if (cur && bodyBuf.trim()) cur.segments.push({ type: "body", en: bodyBuf.trim() }); bodyBuf = ""; }
-    function open(t) { flushBody(); cur = { title: (t && t.trim()) || "(uten tittel)", segments: [] }; chapters.push(cur); }
+    function open(t) { flushBody(); cur = { title: (t && t.trim()) || "(uten tittel)", section: section, segments: [] }; chapters.push(cur); }
     function pushSeg(seg) { flushBody(); if (!cur) open("Dokument"); cur.segments.push(seg); }
-    for (const { style, text } of paras) {
+    for (const { style, text } of used) {
       if (!text) continue;
-      if (/^\d{1,4}$/.test(text) && !isHeading(style)) continue;      // sidetall
+      if (/^\d{1,4}$/.test(text) && !isHeading(style)) continue;                  // sidetall
       if (isHeading1(style)) { open(text); cur.segments.push({ type: "title", en: text }); continue; }
+      if (isHeading2(style)) { section = text; pushSeg({ type: "section", en: text }); continue; } // f.eks. testament-skille
       if (isHeading(style)) { pushSeg({ type: "section", en: text }); continue; }
+      if (looksLetterspaced(text)) { pushSeg({ type: "source", en: despace(text) }); continue; }   // spredte fotnoter/referanser
       if (!cur) open("Dokument");
       if (!bodyBuf) bodyBuf = text;
       else if (!endsSentence(bodyBuf) && startsContinuation(text)) bodyBuf += " " + text;
@@ -221,26 +235,33 @@
     if (!file) return;
     if (!hasSource()) { alert("Last opp den engelske originalen først, så vet appen hvor den norske teksten skal ligge."); return; }
     try {
-      const paras = await fileToParagraphs(file);
-      if (!paras.length) throw new Error("Fant ingen tekst i fila.");
-      const targets = [];
-      store.source.chapters.forEach((c, k) => c.segments.forEach(s => { if (PROSE.includes(s.type)) targets.push({ k, seg: s }); }));
+      const noChapters = await fileToChapters(file);
+      if (!noChapters.length) throw new Error("Fant ingen tekst i fila.");
+      const enChapters = store.source.chapters;
       const had = Object.keys(store.translations).length > 0;
-      const msg = `Dette legger ${paras.length} avsnitt fra den norske fila på rad over de ${targets.length} feltene i originalen.` +
-        (paras.length !== targets.length ? "\n\nMERK: antallet er ulikt, så noen avsnitt kan havne forskjøvet – du må kanskje rette enkelte felt etterpå." : "") +
-        (had ? "\n\nDen ERSTATTER den norske teksten som alt ligger der (ta gjerne sikkerhetskopi først)." : "") +
+      const same = noChapters.length === enChapters.length;
+      const msg = `Stiller den norske fila opp mot originalen – kapittel for kapittel.\n\n` +
+        `Original: ${enChapters.length} kapitler. Norsk fil: ${noChapters.length} kapitler.` +
+        (same ? " (Samme antall – stiller presist opp.)" : "\n\nMERK: ulikt antall kapitler, så noe kan bli forskjøvet. Sjekk gjerne etterpå.") +
+        (had ? "\n\nDette ERSTATTER den norske teksten som alt ligger der (ta gjerne sikkerhetskopi først)." : "") +
         "\n\nFortsette?";
       if (!confirm(msg)) return;
-      // Ren erstatning – ingen gammel tekst blir liggende igjen i halen
       store.translations = {}; store.links = {}; store.uncertain = {};
-      const n = Math.min(paras.length, targets.length);
-      for (let i = 0; i < n; i++) {
-        const { k, seg } = targets[i];
-        if (!store.translations[k]) store.translations[k] = {};
-        store.translations[k][seg.id] = paras[i];
+      const n = Math.min(noChapters.length, enChapters.length);
+      let filled = 0;
+      for (let k = 0; k < n; k++) {
+        const enSegs = enChapters[k].segments.filter(s => PROSE.includes(s.type));
+        const noSegs = noChapters[k].segments.filter(s => PROSE.includes(s.type));
+        if (noChapters[k].section) enChapters[k].sectionNo = noChapters[k].section; // norsk gruppe-etikett
+        const m = Math.min(enSegs.length, noSegs.length);
+        for (let j = 0; j < m; j++) {
+          if (!store.translations[k]) store.translations[k] = {};
+          store.translations[k][enSegs[j].id] = noSegs[j].en;
+          filled++;
+        }
       }
       save(); closeOverlays(); renderAll(); updateUncCount();
-      alert(`Ferdig: la inn ${n} avsnitt.`);
+      alert(`Ferdig: stilte opp ${n} kapitler og ${filled} avsnitt.`);
     } catch (err) {
       alert("Klarte ikke å lese fila: " + err.message);
     }
@@ -286,12 +307,19 @@
     document.getElementById("progress").style.visibility = show ? "visible" : "hidden";
     if (!show) { document.getElementById("appTitle").innerHTML = 'Oversetter-bord <small>engelsk → norsk</small>'; return; }
     if (ci >= store.source.chapters.length) ci = 0;
-    // kapittelvelger
+    // kapittelvelger – gruppert etter testament/seksjon
     sel.innerHTML = "";
+    let curGroup = "__init__", groupEl = null;
     store.source.chapters.forEach((c, i) => {
+      const g = c.sectionNo || c.section || "";
+      if (g !== curGroup) {
+        curGroup = g;
+        if (g) { groupEl = document.createElement("optgroup"); groupEl.label = cleanLabel(g); sel.appendChild(groupEl); }
+        else groupEl = null;
+      }
       const o = document.createElement("option");
       o.value = i; o.textContent = (i + 1) + ". " + c.title;
-      sel.appendChild(o);
+      (groupEl || sel).appendChild(o);
     });
     const docName = store.source.name.replace(/\.(docx|txt|md)$/i, "");
     document.getElementById("appTitle").innerHTML = escapeHtml(docName) + ' <small>engelsk → norsk</small>';
