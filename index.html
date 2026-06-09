@@ -11,9 +11,9 @@
 <header>
   <h1 id="appTitle">Oversetter-bord <small>engelsk → norsk</small></h1>
   <div class="chapnav" id="chapnav">
-    <button class="btn iconbtn" id="prevCh" title="Forrige del">‹</button>
-    <select id="chapterSelect" aria-label="Velg del"></select>
-    <button class="btn iconbtn" id="nextCh" title="Neste del">›</button>
+    <button class="btn iconbtn" id="prevCh" title="Forrige kapittel">‹</button>
+    <select id="chapterSelect" aria-label="Velg kapittel"></select>
+    <button class="btn iconbtn" id="nextCh" title="Neste kapittel">›</button>
   </div>
   <span class="progress" id="progress"></span>
   <div class="spacer"></div>
@@ -48,7 +48,7 @@
       <h2 id="noTitle"></h2>
       <div class="spacer"></div>
       <button class="btn" id="optimizeBtn" title="Bruk ChatGPT/Gemini/Claude til å forbedre oversettelsen for hele kapittelet">🤖 Forbedre med AI</button>
-      <button class="btn" id="pasteChapter" title="Lim inn hele delens oversettelse på én gang">📋 Lim inn del</button>
+      <button class="btn" id="pasteChapter" title="Lim inn hele kapittelets oversettelse på én gang">📋 Lim inn kapittel</button>
     </div>
   </div>
   <div id="grid" class="grid"></div>
@@ -69,7 +69,7 @@
 <div class="overlay" id="settingsOverlay">
   <div class="modal">
     <h3>AI-innstillinger</h3>
-    <p class="sub">Legg inn din egen nøkkel til minst én AI-tjeneste. Nøklene lagres <b>bare</b> i din egen nettleser (på denne maskinen). De brukes kun når du selv trykker på en AI-knapp: «Slå opp ord» sender setningen, ordkobling sender ett avsnitt, og «Forbedre med AI» sender <b>hele kapittelet</b> til den valgte tjenesten.</p>
+    <p class="sub">Legg inn din egen nøkkel til minst én AI-tjeneste. Nøklene lagres <b>bare</b> i din egen nettleser (på denne maskinen). De brukes kun når du bruker en AI-funksjon: «Slå opp ord» sender avsnittet ordet står i (engelsk + din norske tekst), automatisk ordkobling sender ett avsnitt når du klikker et ord, og «Forbedre med AI» sender <b>hele kapittelet</b> til den valgte tjenesten.</p>
 
     <label>Kontekst om boka (følger med til AI-en)</label>
     <textarea id="aiContext" style="min-height:64px" placeholder="F.eks: Dette er en barnebibel for små barn. Bruk enkelt, varmt språk som er fint å lese høyt. Behold bibelske navn."></textarea>
@@ -112,10 +112,10 @@
       <span>Koble ord automatisk med AI når jeg klikker et ord – så lyser det tilsvarende ordet opp på den andre siden (bruker valgt AI + nøkkel, én gang per avsnitt).</span>
     </label>
 
-    <p class="muted-note">💡 DeepL kan dessverre ikke kobles direkte fra nettleseren (DeepL blokkerer det). Vil du ha DeepL i tillegg, si fra – da setter jeg opp en liten ekstra hjelper for det.</p>
+    <p class="muted-note">💡 DeepL kan dessverre ikke kobles direkte til fra nettleseren (DeepL tillater det ikke). Du kan fortsatt lime inn tekst fra DeepL manuelt.</p>
 
     <div class="actions">
-      <button class="btn" id="settingsCancel">Lukk</button>
+      <button class="btn" id="settingsCancel">Avbryt</button>
       <button class="btn primary" id="settingsSave">Lagre</button>
     </div>
   </div>
@@ -124,7 +124,7 @@
 <!-- Lim inn hele delen -->
 <div class="overlay" id="pasteOverlay">
   <div class="modal">
-    <h3>Lim inn oversettelse for hele delen</h3>
+    <h3>Lim inn oversettelse for hele kapittelet</h3>
     <p class="sub">Lim inn den norske teksten (f.eks. fra DeepL eller ChatGPT). Hvert avsnitt – atskilt med en tom linje – legges på riktig plass nedover. Du kan finjustere hvert avsnitt etterpå.</p>
     <textarea id="pasteText" placeholder="Lim inn her …"></textarea>
     <p class="muted-note" id="pasteCount"></p>
@@ -200,7 +200,7 @@
       <b>Slik gjør du:</b><br>
       1. Trykk <b>«Kopier for AI-forbedring»</b> – engelsk + norsk for kapittelet kopieres med en ferdig instruks.<br>
       2. Lim inn i ChatGPT, Gemini eller Claude og send.<br>
-      3. Kopier svaret og lim det inn i feltet nederst → <b>«Sett inn forbedret norsk»</b>.
+      3. Kopier svaret og lim det inn i feltet nederst → <b>«Sett inn på rad»</b> (eller <b>«Sett inn med AI»</b> hvis avsnittene ikke stemmer helt).
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
       <button class="btn primary" id="optCopyAI">📋 Kopier for AI-forbedring</button>
@@ -229,12 +229,12 @@
     <p class="sub">Engelsk original til venstre, din norske oversettelse til høyre. Alt du gjør lagres automatisk i din egen nettleser.</p>
     <div class="muted-note" style="font-size:14.5px;line-height:1.7">
       <p><b>📄 Kom i gang:</b> Last opp den engelske originalen under «≡ Fil → Last opp engelsk original». Vil du, kan du også laste opp en ferdig norsk oversettelse som egen fil – den legges på rad ved siden av.</p>
-      <p><b>✍️ Skrive / lime inn norsk:</b> Klikk på et tomt norsk felt (eller dobbeltklikk teksten) for å skrive eller lime inn – f.eks. fra DeepL eller ChatGPT. Hele delen på én gang: «📋 Lim inn del».</p>
-      <p><b>👆 Finne igjen et ord:</b> Klikk et ord – da lyser det tilsvarende avsnittet opp på den andre siden. Virker begge veier.</p>
-      <p><b>🔗 Koble ord sammen:</b> Klikk først et ord på den ene siden, så ordet som hører til på den andre. De får samme farge og lyser opp hverandre.</p>
+      <p><b>✍️ Skrive / lime inn norsk:</b> Klikk på et tomt norsk felt (eller dobbeltklikk teksten) for å skrive eller lime inn – f.eks. fra DeepL eller ChatGPT. Hele kapittelet på én gang: «📋 Lim inn kapittel».</p>
+      <p><b>👆 Finne igjen et ord:</b> Klikk et ord – da lyser det tilsvarende avsnittet opp på den andre siden. Virker begge veier. Har du lagt inn en AI-nøkkel (⚙︎), kobles også ordene automatisk, så det riktige ordet lyser opp – da sendes det ene avsnittet til AI-en du har valgt (kan slås av under ⚙︎).</p>
+      <p><b>🔗 Koble ord selv:</b> Klikk først et ord på den ene siden, så ordet som hører til på den andre. De får samme farge og lyser opp hverandre. Din egen kobling vinner alltid over AI-ens.</p>
       <p><b>↧ 🗑 Får du det ikke til å gå opp?</b> Hold musa over et norsk felt – da dukker små knapper opp. <b>↧</b> setter inn en tom linje og skyver den norske teksten nedover; <b>🗑</b> fjerner en linje og skyver oppover. Slik dytter du oversettelsen på plass når den har forskjøvet seg.</p>
       <p><b>❓ Usikker på et ord?</b> Klikk ordet → «Merk usikker». Alle merkede ord samles under «❓ Usikre». Derfra kan du kopiere dem til ChatGPT/Claude/Gemini, eller trykke «🔍 Slå opp ord» direkte (krever en nøkkel under ⚙︎). Knappen «📋 Kopier (m/ original)» kopierer både den engelske originalen og ditt norske forslag, klart til å lime inn i en AI-chat.</p>
-      <p><b>🤖 Forbedre med AI:</b> Knappen «🤖 Forbedre med AI» (over norsk-kolonnen) kopierer hele kapittelet – engelsk + norsk – med en ferdig instruks. Lim inn i ChatGPT/Gemini/Claude, og lim svaret tilbake. Der kan du også kopiere kun engelsk eller kun norsk for hele kapittelet.</p>
+      <p><b>🤖 Forbedre med AI:</b> Knappen over norsk-kolonnen åpner et vindu med tre veier: kopier kapittelet (engelsk + norsk, med ferdig instruks) og lim inn i ChatGPT/Gemini/Claude; hent forbedringen direkte (med nøkkel); eller lim AI-svaret tilbake – «Sett inn på rad», eller «Sett inn med AI» som fordeler teksten på riktig felt. Der kan du også kopiere kun engelsk eller kun norsk for hele kapittelet.</p>
       <p><b>💾 Trygt lagret:</b> Under «≡ Fil» tar du sikkerhetskopi, henter fram igjen, og eksporterer den ferdige norske teksten.</p>
     </div>
     <div class="actions">

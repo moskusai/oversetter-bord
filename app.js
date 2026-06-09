@@ -27,9 +27,9 @@
   function load() {
     try {
       const v = JSON.parse(localStorage.getItem(KEY));
-      if (v) return v;
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;   // avvis korrupt/primitiv lagring
     } catch (e) {}
-    // Migrer nøkkel fra tidligere versjon hvis den finnes
+    // Migrer nøkkel fra tidligere versjon hvis den finnes, og rydd den gamle etterpå
     const s = freshStore();
     try {
       const old = JSON.parse(localStorage.getItem(OLD_KEY));
@@ -37,6 +37,7 @@
         if (old.settings.apiKey) s.settings.keys.anthropic = old.settings.apiKey;
         if (old.settings.model) s.settings.models.anthropic = old.settings.model;
       }
+      localStorage.removeItem(OLD_KEY);
     } catch (e) {}
     return s;
   }
@@ -61,7 +62,7 @@
     saveTimer = setTimeout(() => {
       try { localStorage.setItem(KEY, JSON.stringify(store)); saveWarned = false; }
       catch (e) {
-        if (!saveWarned) { saveWarned = true; alert("Obs: nettleseren har lite lagringsplass igjen. Ta en sikkerhetskopi under «≡ Fil» for å være trygg."); }
+        if (!saveWarned) { saveWarned = true; alert("Obs: nettleseren har lite lagringsplass igjen. Ta en arbeidsfil under «≡ Fil» for å være trygg."); }
       }
     }, 200);
   }
@@ -86,10 +87,23 @@
     if (arr && arr.length) store.links[ci][segId] = arr; else delete store.links[ci][segId];
     save();
   }
+  // Kapittel-eksplisitte varianter – brukes når et AI-svar kan komme etter at brukeren har byttet kapittel
+  function setNoAt(k, segId, text) {
+    if (!store.translations[k]) store.translations[k] = {};
+    if (text) store.translations[k][segId] = text; else delete store.translations[k][segId];
+    save();
+  }
+  function clearMetaAt(k, segId) {
+    if (store.links[k]) delete store.links[k][segId];
+    if (store.align[k]) delete store.align[k][segId];
+    if (store.uncertain[k]) store.uncertain[k] = store.uncertain[k].filter(u => !(u.segId === segId && u.side === "no"));
+    triedAlign.delete(k + ":" + segId);
+  }
   // Auto-kobling fra AI (egen lagring så den ikke roter til de manuelle koblingene)
   function getAlign(segId) { return store.align[ci] ? store.align[ci][segId] : undefined; }
   function setAlign(segId, arr) { if (!store.align[ci]) store.align[ci] = {}; store.align[ci][segId] = arr || []; save(); }
-  function clearAlign(segId) { if (store.align[ci]) delete store.align[ci][segId]; }
+  function clearAlign(segId) { if (store.align[ci]) delete store.align[ci][segId]; triedAlign.delete(ci + ":" + segId); }
+  function resetAlignCaches() { aligning.clear(); triedAlign.clear(); }
 
   // ---------- Lese Word/tekst-filer ----------
   async function readDocxXml(buf) {
@@ -225,7 +239,7 @@
   async function handleEnglishFile(file) {
     if (!file) return;
     if (hasSource() && Object.keys(store.translations).length) {
-      if (!confirm("Dette erstatter originalen og fjerner den pågående oversettelsen. Ta gjerne sikkerhetskopi først (≡ Fil). Vil du fortsette?")) return;
+      if (!confirm("Dette erstatter originalen og fjerner den pågående oversettelsen. Ta gjerne en arbeidsfil først (≡ Fil). Vil du fortsette?")) return;
     }
     try {
       const chapters = await fileToChapters(file);
@@ -233,6 +247,7 @@
       if (!nSeg) throw new Error("Fant ingen tekst i fila.");
       store.source = { name: file.name, chapters };
       store.translations = {}; store.links = {}; store.uncertain = {}; store.align = {};
+      resetAlignCaches();
       ci = 0; active = null; editingSeg = null;
       save(); closeOverlays(); renderAll(); updateUncCount();
     } catch (err) {
@@ -251,10 +266,12 @@
       const msg = `Stiller den norske fila opp mot originalen – kapittel for kapittel.\n\n` +
         `Original: ${enChapters.length} kapitler. Norsk fil: ${noChapters.length} kapitler.` +
         (same ? " (Samme antall – stiller presist opp.)" : "\n\nMERK: ulikt antall kapitler, så noe kan bli forskjøvet. Sjekk gjerne etterpå.") +
-        (had ? "\n\nDette ERSTATTER den norske teksten som alt ligger der (ta gjerne sikkerhetskopi først)." : "") +
+        (had ? "\n\nDette ERSTATTER den norske teksten som alt ligger der (ta gjerne en arbeidsfil først)." : "") +
         "\n\nFortsette?";
       if (!confirm(msg)) return;
       store.translations = {}; store.links = {}; store.uncertain = {}; store.align = {};
+      resetAlignCaches(); active = null; editingSeg = null;
+      enChapters.forEach(c => delete c.sectionNo);   // ikke la gamle norske gruppe-etiketter henge igjen
       const n = Math.min(noChapters.length, enChapters.length);
       let filled = 0;
       for (let k = 0; k < n; k++) {
@@ -391,9 +408,9 @@
   }
   // ---------- Manuell justering (skyv norsk kolonne opp/ned) ----------
   function proseSegs() { return chapter().segments.filter(s => PROSE.includes(s.type)); }
-  function clearChapterAlignMeta() {
-    delete store.links[ci]; delete store.align[ci];
-    if (store.uncertain[ci]) store.uncertain[ci] = store.uncertain[ci].filter(u => u.side !== "no");
+  function clearMetaFrom(segs, idx) {           // nullstill koblinger/merker kun fra skiftepunktet og nedover
+    for (let j = idx; j < segs.length; j++) clearMetaAt(ci, segs[j].id);
+    save();
   }
   function insertNoGap(segId) {                 // sett inn tom linje her -> skyv norsk nedover
     const segs = proseSegs(), idx = segs.findIndex(s => s.id === segId);
@@ -403,15 +420,18 @@
     const overflow = texts.pop();               // siste faller ut – ikke mist tekst
     if (overflow) texts[texts.length - 1] = (texts[texts.length - 1] ? texts[texts.length - 1] + " " : "") + overflow;
     segs.forEach((s, j) => setNo(s.id, texts[j]));
-    clearChapterAlignMeta(); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
+    clearMetaFrom(segs, idx); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
+    if (overflow) alert("De to nederste avsnittene i kapittelet ble slått sammen for ikke å miste tekst – sjekk slutten av kapittelet.");
   }
   function deleteNoCell(segId) {                 // fjern denne linja -> skyv norsk oppover
     const segs = proseSegs(), idx = segs.findIndex(s => s.id === segId);
     if (idx < 0) return;
+    const cur = getNo(segId);
+    if (cur && !confirm(`Dette fjerner avsnittet «${truncate(cur, 60)}» og skyver resten oppover. Fortsette?`)) return;
     const texts = segs.map(s => getNo(s.id));
     texts.splice(idx, 1); texts.push("");
     segs.forEach((s, j) => setNo(s.id, texts[j]));
-    clearChapterAlignMeta(); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
+    clearMetaFrom(segs, idx); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
   }
 
   function renderChapter() {
@@ -449,7 +469,7 @@
       const theirWi = active.side === "en" ? pair[1] : pair[0];
       if (mineWi === active.wi) { const ps = wordSpan(otherCard, theirWi); if (ps) ps.classList.add("w-linkhot"); }
     }
-    hasLink = segLinks(active.segId).some(p => (active.side === "en" ? p[0] : p[1]) === active.wi);
+    hasLink = partners.some(p => (active.side === "en" ? p[0] : p[1]) === active.wi);
     bar.classList.add("show");
     document.getElementById("abSel").innerHTML = `Valgt: <b>«${escapeHtml(active.word)}»</b> (${active.side === "en" ? "engelsk" : "norsk"})`;
     document.getElementById("abHint").textContent = active.side === "en"
@@ -461,6 +481,7 @@
 
   grid.addEventListener("click", (e) => {
     const span = e.target.closest(".w"); if (!span) return;
+    if (e.detail > 1) return;                 // andre klikk i et dobbeltklikk skal ikke lage kobling
     const card = e.target.closest(".card");
     const segId = +card.dataset.segId, side = card.dataset.side, wi = +span.dataset.wi, word = span.textContent;
     if (active && active.side !== side && active.segId === segId) {
@@ -470,6 +491,9 @@
       const idx = links.findIndex(p => p[0] === enWi && p[1] === noWi);
       if (idx >= 0) links.splice(idx, 1);
       else { for (let i = links.length - 1; i >= 0; i--) if (links[i][0] === enWi || links[i][1] === noWi) links.splice(i, 1); links.push([enWi, noWi]); }
+      // manuell kobling overstyrer en eventuell AI-kobling for de samme ordene
+      const al = getAlign(segId);
+      if (al && al.length) setAlign(segId, al.filter(p => p[0] !== enWi && p[1] !== noWi));
       setSegLinks(segId, links); active = { segId, side, wi, word }; renderChapter(); return;
     }
     active = { segId, side, wi, word }; updateHighlights();
@@ -484,7 +508,10 @@
   document.getElementById("abClose").onclick = () => { active = null; updateHighlights(); };
   document.getElementById("abUnlink").onclick = () => {
     if (!active) return;
-    setSegLinks(active.segId, segLinks(active.segId).filter(p => (active.side === "en" ? p[0] : p[1]) !== active.wi));
+    const mine = (p) => (active.side === "en" ? p[0] : p[1]) !== active.wi;
+    setSegLinks(active.segId, segLinks(active.segId).filter(mine));
+    const al = getAlign(active.segId);
+    if (al && al.length) setAlign(active.segId, al.filter(mine));   // fjern også AI-koblingen for ordet
     renderChapter();
   };
   document.getElementById("abUncertain").onclick = () => {
@@ -526,8 +553,10 @@
     try { const j = await res.json(); m = (j.error && (j.error.message || j.error)) || m; } catch (e) {}
     return new Error(typeof m === "string" ? m : JSON.stringify(m));
   }
+  let lastCallTruncated = false;   // satt av callProvider når svaret ble kuttet på token-taket
   async function callProvider(prov, sys, user, maxTokens) {
     const s = store.settings;
+    lastCallTruncated = false;
     if (prov === "anthropic") {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
@@ -536,11 +565,14 @@
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
+      lastCallTruncated = d.stop_reason === "max_tokens";
       return (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
     }
     if (prov === "openai") {
-      const body = { model: s.models.openai || "gpt-4o", messages: [{ role: "system", content: sys }, { role: "user", content: user }] };
-      if (maxTokens) body.max_completion_tokens = maxTokens;   // ny param som også nyere modeller godtar
+      const model = s.models.openai || "gpt-4o";
+      const body = { model, messages: [{ role: "system", content: sys }, { role: "user", content: user }] };
+      // resonneringsmodeller bruker skjulte tenke-tokens av samme budsjett – gi romsligere tak
+      if (maxTokens) body.max_completion_tokens = /^(o\d|gpt-5)/i.test(model) ? Math.max(maxTokens, 4000) : maxTokens;
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", "authorization": "Bearer " + s.keys.openai },
@@ -548,20 +580,28 @@
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
-      return ((d.choices && d.choices[0] && d.choices[0].message && d.choices[0].message.content) || "").trim();
+      const ch = d.choices && d.choices[0];
+      lastCallTruncated = !!ch && ch.finish_reason === "length";
+      return ((ch && ch.message && ch.message.content) || "").trim();
     }
     if (prov === "gemini") {
       const model = s.models.gemini || "gemini-2.0-flash";
       const body = { system_instruction: { parts: [{ text: sys }] }, contents: [{ parts: [{ text: user }] }] };
-      if (maxTokens) body.generationConfig = { maxOutputTokens: Math.min(maxTokens, 8192) };
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(s.keys.gemini)}`, {
+      if (maxTokens) {
+        // eldre modeller har 8192-tak; nyere (2.5/3.x) tåler mye mer og bruker tenke-tokens av samme budsjett
+        const cap = /gemini-(1\.|2\.0)/i.test(model) ? 8192 : 65536;
+        const want = /gemini-(1\.|2\.0)/i.test(model) ? maxTokens : Math.max(maxTokens, 4000);
+        body.generationConfig = { maxOutputTokens: Math.min(want, cap) };
+      }
+      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
-        headers: { "content-type": "application/json" },
+        headers: { "content-type": "application/json", "x-goog-api-key": s.keys.gemini },   // nøkkel i header, ikke i URL
         body: JSON.stringify(body),
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
       const c = d.candidates && d.candidates[0];
+      lastCallTruncated = !!c && c.finishReason === "MAX_TOKENS";
       return ((c && c.content && c.content.parts || []).map(p => p.text || "").join("\n")).trim();
     }
     throw new Error("Ukjent AI.");
@@ -575,13 +615,20 @@
     const enList = enW.map((t, i) => i + ":" + t.t).join("  ");
     const noList = noW.map((t, i) => i + ":" + t.t).join("  ");
     const sys = "Du kobler ord mellom en engelsk setning og dens norske oversettelse. Svar KUN med JSON, ingen forklaring.";
-    const user = `Engelske ord (indeks:ord):\n${enList}\n\nNorske ord (indeks:ord):\n${noList}\n\n` +
+    const user = aiContext() + `Engelske ord (indeks:ord):\n${enList}\n\nNorske ord (indeks:ord):\n${noList}\n\n` +
       "For hvert engelske ord som har en tydelig motpart i den norske teksten, gi paret [engelskIndeks, norskIndeks]. " +
       "Hopp over ord uten tydelig motpart. Svar KUN med en JSON-liste, f.eks. [[0,1],[2,0]].";
-    const resp = await callProvider(prov, sys, user, 700);
+    const resp = await callProvider(prov, sys, user, Math.min(4000, 200 + enW.length * 12));   // skaler med avsnittslengde
     const m = resp && resp.match(/\[[\s\S]*\]/);
     if (!m) return [];
-    let arr; try { arr = JSON.parse(m[0]); } catch (e) { return []; }
+    let arr;
+    try { arr = JSON.parse(m[0]); }
+    catch (e) {
+      // avkuttet JSON? behold de hele parene fram til siste komplette
+      const cut = m[0].lastIndexOf("],");
+      if (cut > 0) { try { arr = JSON.parse(m[0].slice(0, cut + 1) + "]"); } catch (e2) { return []; } }
+      else return [];
+    }
     if (!Array.isArray(arr)) return [];
     const out = [];
     for (const p of arr) if (Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]) &&
@@ -600,14 +647,18 @@
     const tag = ci + ":" + segId;
     if (aligning.has(tag) || triedAlign.has(tag)) return;
     aligning.add(tag);
-    const myChapter = ci;
+    const myChapter = ci, myText = noText;
     if (active && active.segId === segId) document.getElementById("abHint").textContent = "🔗 Kobler ord med AI …";
     alignWords(def, seg.en, noText).then(pairs => {
       aligning.delete(tag);
-      if (myChapter !== ci) return;
-      if (pairs.length) { setAlign(segId, pairs); renderChapter(); }
-      else { triedAlign.add(tag); if (active && active.segId === segId) updateHighlights(); }
-    }).catch(() => { aligning.delete(tag); triedAlign.add(tag); if (active && active.segId === segId) updateHighlights(); });
+      // forkast svaret hvis kapittelet er byttet, teksten endret, eller en manuell kobling er laget i mellomtiden
+      if (myChapter !== ci || getNo(segId) !== myText || segLinks(segId).length) return;
+      if (pairs.length) setAlign(segId, pairs);
+      else triedAlign.add(tag);
+      // IKKE renderChapter her – det ville ødelagt en åpen rediger-boks. Markering holder.
+      if (active && active.segId === segId) updateHighlights();
+    }).catch(() => { aligning.delete(tag); if (active && active.segId === segId) updateHighlights(); });
+    // merk: feil (nett/ratelimit) caches ikke – nytt klikk prøver igjen
   }
 
   function refreshLookupButtons() {
@@ -622,8 +673,11 @@
     box.innerHTML = `<div class="head"${isError ? ' style="color:#b5482a"' : ''}>${isError ? "Noe gikk galt" : "Svar"} <span class="tagprov">${PROV_NAME[prov]}</span></div>${escapeHtml(text)}`;
     document.getElementById("lookupBody").appendChild(box);
   }
+  const lookupBusy = new Set();
   async function runLookup(prov) {
     if (!store.settings.keys[prov]) { openOverlay("settingsOverlay"); return; }
+    if (lookupBusy.has(prov)) return;            // ikke send dobbelt ved utålmodige klikk
+    lookupBusy.add(prov);
     const { sys, user } = buildPrompts(lookupCtx);
     const loading = document.createElement("div"); loading.className = "lookup-result"; loading.textContent = "Henter svar fra " + PROV_NAME[prov] + " …";
     document.getElementById("lookupBody").appendChild(loading);
@@ -633,6 +687,7 @@
       else appendLookupResult(prov, "AI-en ga ikke noe svar denne gangen (kan skyldes innholdsfilter, eller at svaret ble for langt). Prøv igjen, en annen AI, eller bruk «❓ Usikre → Kopier».", true);
     }
     catch (err) { loading.remove(); appendLookupResult(prov, err.message + "\n\n(Sjekk nøkkel/modell under ⚙︎, eller bruk «❓ Usikre → Kopier» for å spørre i en vanlig chat.)", true); }
+    finally { lookupBusy.delete(prov); }
   }
   function openLookup() {
     if (!active) return;
@@ -673,20 +728,26 @@
     document.getElementById("uncCount").textContent = n ? `(${n})` : "";
   }
 
-  // ---------- Lim inn hele delen ----------
+  // ---------- Lim inn hele kapittelet ----------
   const pasteText = document.getElementById("pasteText");
-  document.getElementById("pasteChapter").onclick = () => { pasteText.value = ""; updatePasteCount(); openOverlay("pasteOverlay"); setTimeout(() => pasteText.focus(), 0); };
+  document.getElementById("pasteChapter").onclick = () => {
+    if (!pasteTargets().length) { alert("Dette kapittelet har ingen brødtekst-avsnitt å lime inn i – bla til et annet kapittel."); return; }
+    pasteText.value = ""; updatePasteCount(); openOverlay("pasteOverlay"); setTimeout(() => pasteText.focus(), 0);
+  };
   function pasteTargets() { return chapter().segments.filter(s => s.type === "body"); }
   function updatePasteCount() {
     const paras = pasteText.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
     document.getElementById("pasteCount").textContent =
-      `${paras.length} avsnitt limt inn · denne delen har ${pasteTargets().length} brødtekst-avsnitt. De legges nedover i rekkefølge – tittel og sitater fyller du i egne felt.`;
+      `${paras.length} avsnitt limt inn · dette kapittelet har ${pasteTargets().length} brødtekst-avsnitt. De legges nedover i rekkefølge – tittel og sitater fyller du i egne felt.`;
   }
   pasteText.addEventListener("input", updatePasteCount);
   document.getElementById("pasteApply").onclick = () => {
     const paras = pasteText.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-    pasteTargets().forEach((seg, i) => { if (i < paras.length) { setNo(seg.id, paras[i]); setSegLinks(seg.id, []); clearAlign(seg.id); } });
-    closeOverlays(); renderChapter();
+    const targets = pasteTargets();
+    targets.forEach((seg, i) => { if (i < paras.length) { setNo(seg.id, paras[i]); setSegLinks(seg.id, []); clearMetaAt(ci, seg.id); } });
+    active = null; closeOverlays(); renderChapter(); updateUncCount();
+    if (paras.length !== targets.length)
+      alert(`Satt inn ${Math.min(paras.length, targets.length)} avsnitt. Du limte inn ${paras.length}, kapittelet har ${targets.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
   };
   document.getElementById("pasteCancel").onclick = closeOverlays;
 
@@ -708,37 +769,59 @@
     const paras = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
     const bodies = chapterBodies();
     const n = Math.min(paras.length, bodies.length);
-    for (let i = 0; i < n; i++) { setNo(bodies[i].id, paras[i]); setSegLinks(bodies[i].id, []); clearAlign(bodies[i].id); }
-    closeOverlays(); renderChapter();
+    for (let i = 0; i < n; i++) { setNo(bodies[i].id, paras[i]); setSegLinks(bodies[i].id, []); clearMetaAt(ci, bodies[i].id); }
+    active = null; closeOverlays(); renderChapter(); updateUncCount();
     if (paras.length !== bodies.length)
       alert(`Satt inn ${n} avsnitt. AI-svaret hadde ${paras.length}, kapittelet har ${bodies.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
   }
+  let distributing = false;
   async function distributeWithAI(pasted) {
     if (!pasted.trim()) return;
+    if (distributing) return;                   // ikke send dobbelt
+    const count = document.getElementById("optCount");
     const def = store.settings.provider;
-    if (!store.settings.keys[def]) { openOverlay("settingsOverlay"); return; }
-    const segs = chapter().segments;
-    const typeLabel = { title: "tittel", body: "brødtekst", quote: "sitat", section: "seksjon", note: "merknad", label: "overskrift", attribution: "kilde", source: "kilde" };
-    const list = segs.filter(s => s.en && s.en.trim()).map(s => `[${s.id}] (${typeLabel[s.type] || s.type}) ${s.en}`).join("\n");
+    if (!store.settings.keys[def]) {
+      count.textContent = "Du må legge inn en AI-nøkkel under ⚙︎ (øverst til høyre) først. Teksten din står trygt her imens – eller bruk «Sett inn på rad».";
+      return;
+    }
+    // Bare felt som faktisk telles og eksporteres (PROSE) – ellers kan tekst "forsvinne" fra den ferdige boka
+    const myChapter = ci;
+    const segs = chapter().segments.filter(s => PROSE.includes(s.type) && s.en && s.en.trim());
+    const typeLabel = { title: "tittel", body: "brødtekst", quote: "sitat", section: "seksjon", note: "merknad" };
+    const list = segs.map(s => `[${s.id}] (${typeLabel[s.type] || s.type}) ${s.en}`).join("\n");
     const sys = "Du fordeler en ferdig norsk oversettelse på de riktige feltene i et kapittel. Svar KUN med gyldig JSON, ingen forklaring.";
     const user = `Feltene i kapittelet (indeks, type, engelsk original):\n${list}\n\n` +
       `Den norske oversettelsen av hele kapittelet:\n"""\n${pasted}\n"""\n\n` +
       `Fordel den norske teksten på riktig felt ut fra mening og rekkefølge. Returner KUN et JSON-objekt {"indeks": "norsk tekst", ...} for de feltene som har en norsk motpart. Ikke ta med engelsk, ingen forklaring.`;
-    const count = document.getElementById("optCount");
+    distributing = true;
+    const aiBtn = document.getElementById("optApplyAI"), rowBtn = document.getElementById("optApply");
+    aiBtn.disabled = true; rowBtn.disabled = true;
     count.textContent = "🤖 Fordeler teksten med AI …";
     try {
       const resp = await callProvider(def, sys, user, 16000);
+      if (lastCallTruncated) throw new Error("Svaret ble for langt og ble kuttet. Prøv igjen, eller del kapittelet i to og lim inn halvparten om gangen.");
       const m = resp && resp.match(/\{[\s\S]*\}/);
-      if (!m) throw new Error("Fikk ikke et gyldig svar fra AI-en. Prøv igjen, eller bruk «Sett inn (på rad)».");
-      const obj = JSON.parse(m[0]);
+      if (!m) throw new Error("Fikk ikke et gyldig svar fra AI-en. Prøv igjen, eller bruk «Sett inn på rad».");
+      let obj;
+      try { obj = JSON.parse(m[0]); }
+      catch (e) { throw new Error("Fikk ikke et gyldig svar fra AI-en. Prøv igjen, eller bruk «Sett inn på rad»."); }
       let n = 0;
       Object.keys(obj).forEach(k => {
         const id = parseInt(k, 10), seg = segs.find(s => s.id === id);
-        if (seg && typeof obj[k] === "string" && obj[k].trim()) { setNo(seg.id, obj[k].trim()); setSegLinks(seg.id, []); clearAlign(seg.id); n++; }
+        if (seg && typeof obj[k] === "string" && obj[k].trim()) {
+          // skriv alltid til kapittelet svaret gjelder – selv om brukeren har blatt videre
+          setNoAt(myChapter, seg.id, obj[k].trim());
+          clearMetaAt(myChapter, seg.id);
+          n++;
+        }
       });
-      closeOverlays(); renderChapter();
-      alert(`AI fordelte den norske teksten på ${n} felt i kapittelet. Sjekk gjerne gjennom.`);
+      if (!n) { count.textContent = "AI-en klarte ikke å fordele teksten. Prøv igjen, eller bruk «Sett inn på rad». Teksten din står fortsatt her."; return; }
+      active = null; closeOverlays();
+      if (ci === myChapter) renderChapter(); else renderAll();
+      updateUncCount();
+      alert(`AI fordelte den norske teksten på ${n} felt i kapittelet «${store.source.chapters[myChapter].title}». Sjekk gjerne gjennom.`);
     } catch (err) { count.textContent = "Feil: " + err.message; }
+    finally { distributing = false; aiBtn.disabled = false; rowBtn.disabled = false; }
   }
 
   const optPaste = document.getElementById("optPaste");
@@ -748,7 +831,9 @@
       ? `${paras.length} avsnitt i svaret · kapittelet har ${chapterBodies().length} brødtekst-avsnitt.` : "";
   }
   document.getElementById("optimizeBtn").onclick = () => {
-    optPaste.value = ""; updateOptCount();
+    if (!chapterBodies().length) { alert("Dette kapittelet har ingen brødtekst å forbedre – bla til et annet kapittel."); return; }
+    // ikke kast tekst brukeren alt har limt inn (f.eks. hvis modalen ble lukket ved uhell)
+    updateOptCount();
     const def = store.settings.provider;
     const hasKey = store.settings.keys[def];
     const row = document.getElementById("optApiRow");
@@ -764,17 +849,26 @@
   document.getElementById("optApply").onclick = () => { if (optPaste.value.trim()) applyOptimized(optPaste.value); else closeOverlays(); };
   document.getElementById("optApplyAI").onclick = () => distributeWithAI(optPaste.value);
   document.getElementById("optClose").onclick = closeOverlays;
+  let fetching = false;
   document.getElementById("optFetch").onclick = async () => {
     const def = store.settings.provider;
     if (!store.settings.keys[def]) { openOverlay("settingsOverlay"); return; }
+    if (fetching) return;                        // ikke send dobbelt
+    fetching = true;
+    const btn = document.getElementById("optFetch"); btn.disabled = true;
     const status = document.getElementById("optFetchStatus");
     status.textContent = "Henter fra " + PROV_NAME[def] + " …";
+    const myChapter = ci;
     const { sys, user } = buildOptimizePrompt();
     try {
       const text = await callProvider(def, sys, user, 8000);
+      if (ci !== myChapter) { status.textContent = "Kapittelet ble byttet mens AI-en jobbet – gå tilbake og hent på nytt."; return; }
       optPaste.value = text || ""; updateOptCount();
-      status.textContent = text ? "Hentet – se gjennom og trykk «Sett inn forbedret norsk»." : "AI-en ga tomt svar. Prøv igjen.";
+      status.textContent = !text ? "AI-en ga tomt svar. Prøv igjen."
+        : lastCallTruncated ? "OBS: Svaret ble kuttet (for langt kapittel). Se gjennom – slutten kan mangle."
+        : "Hentet – se gjennom og trykk «Sett inn på rad» (eller «Sett inn med AI» hvis avsnittene ikke stemmer).";
     } catch (err) { status.textContent = "Feil: " + err.message; }
+    finally { fetching = false; btn.disabled = false; }
   };
 
   // ---------- Innstillinger ----------
@@ -821,7 +915,7 @@
     items.forEach(({ c, k, u, idx }) => {
       const d = document.createElement("div"); d.className = "uncertain-item";
       d.innerHTML = `<button class="rm" title="Fjern">✕</button><span class="word">${escapeHtml(u.word)}</span> ` +
-        `<span style="color:var(--muted);font-size:13px">– ${escapeHtml(c.title)} (del ${k + 1})</span>` +
+        `<span style="color:var(--muted);font-size:13px">– ${escapeHtml(c.title)} (kap. ${k + 1})</span>` +
         `<div class="ctx">EN: ${escapeHtml(truncate(u.en, 120))}</div>` + (u.no ? `<div class="ctx">NO: ${escapeHtml(truncate(u.no, 120))}</div>` : "");
       d.querySelector(".rm").onclick = () => { store.uncertain[k].splice(idx, 1); save(); renderUncertain(); updateUncCount(); if (k === ci) renderChapter(); };
       wrap.appendChild(d);
@@ -833,7 +927,7 @@
     if (!items.length) { alert("Ingen ord å kopiere ennå."); return; }
     let txt = aiContext() + "Jeg oversetter en bok fra engelsk til norsk bokmål. Kan du sjekke disse ordene jeg er usikker på? For hvert ord: gi norsk oversettelse og en kort begrunnelse.\n\n";
     items.forEach(({ c, k, u }, i) => {
-      txt += `${i + 1}) Ord: «${u.word}»  (${c.title}, del ${k + 1})\n   Engelsk: "${u.en}"\n`;
+      txt += `${i + 1}) Ord: «${u.word}»  (${c.title}, kap. ${k + 1})\n   Engelsk: "${u.en}"\n`;
       if (u.no) txt += `   Min norske tekst: "${u.no}"\n`;
       txt += "\n";
     });
@@ -846,8 +940,17 @@
 
   // ---------- Lagre nå ----------
   const saveBtn = document.getElementById("saveBtn");
+  function commitOpenEditor() {                 // ta med tekst som står i en åpen rediger-boks
+    if (editingSeg == null) return;
+    const ta = grid.querySelector(".editbox");
+    if (!ta) return;
+    const v = ta.value.trim();
+    if (!store.translations[ci]) store.translations[ci] = {};
+    if (v) store.translations[ci][editingSeg] = v; else delete store.translations[ci][editingSeg];
+  }
   function saveNow() {
     clearTimeout(saveTimer);
+    commitOpenEditor();
     try {
       localStorage.setItem(KEY, JSON.stringify(store)); saveWarned = false;
       saveBtn.textContent = "✓ Lagret"; saveBtn.classList.add("ok");
@@ -884,13 +987,43 @@
   noFile.onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; handleNorwegianFile(f); };
 
   document.getElementById("exportJson").onclick = () => {
-    const blob = JSON.stringify({ source: store.source, translations: store.translations, links: store.links, uncertain: store.uncertain, align: store.align }, null, 2);
-    download("oversettelse-sikkerhetskopi.json", blob, "application/json");
+    const blob = JSON.stringify({
+      source: store.source, translations: store.translations, links: store.links,
+      uncertain: store.uncertain, align: store.align,
+      settings: { context: store.settings.context, autoAlign: store.settings.autoAlign },  // aldri nøkler
+    }, null, 2);
+    download("arbeidsfil-oversettelse.json", blob, "application/json");
   };
   function validSource(src) {
     if (src == null) return true;
     if (typeof src !== "object" || !Array.isArray(src.chapters) || !src.chapters.length) return false;
     return src.chapters.every(c => c && Array.isArray(c.segments));
+  }
+  // Rens importerte tabeller: riktig form per kapittel, og dropp kapitler utenfor dokumentet
+  function isPairArr(v) { return Array.isArray(v) && v.every(p => Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]) && p[0] >= 0 && p[1] >= 0); }
+  function normTables(obj, nChapters, chapters) {
+    const t = {}, l = {}, u = {}, a = {};
+    const tbl = (v) => (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+    const tIn = tbl(obj.translations), lIn = tbl(obj.links), uIn = tbl(obj.uncertain), aIn = tbl(obj.align);
+    for (let k = 0; k < nChapters; k++) {
+      const nSegs = chapters[k].segments.length;
+      const tb = tIn[k]; if (tb && typeof tb === "object" && !Array.isArray(tb)) {
+        const out = {}; for (const id in tb) if (typeof tb[id] === "string") out[id] = tb[id];
+        if (Object.keys(out).length) t[k] = out;
+      }
+      for (const [src, dst] of [[lIn, l], [aIn, a]]) {
+        const b = src[k]; if (b && typeof b === "object" && !Array.isArray(b)) {
+          const out = {}; for (const id in b) if (isPairArr(b[id])) out[id] = b[id];
+          if (Object.keys(out).length) dst[k] = out;
+        }
+      }
+      const ub = uIn[k]; if (Array.isArray(ub)) {
+        const out = ub.filter(x => x && typeof x === "object" && typeof x.word === "string" &&
+          Number.isInteger(x.segId) && x.segId >= 0 && x.segId < nSegs && (x.side === "en" || x.side === "no") && Number.isInteger(x.wi));
+        if (out.length) u[k] = out;
+      }
+    }
+    return { t, l, u, a };
   }
   document.getElementById("importJson").onclick = () => importFile.click();
   importFile.onchange = (e) => {
@@ -900,22 +1033,25 @@
       let obj;
       try { obj = JSON.parse(r.result); } catch (err) { alert("Klarte ikke å lese fila: ugyldig format."); return; }
       if (!obj || typeof obj !== "object" || !validSource(obj.source)) {
-        alert("Sikkerhetskopien ser skadet ut (mangler gyldig dokumentstruktur). Ingen endring gjort."); return;
+        alert("Arbeidsfila ser skadet ut (mangler gyldig dokumentstruktur). Ingen endring gjort."); return;
       }
       const snapshot = JSON.stringify(store);
       try {
         store.source = obj.source || null;
         if (store.source) store.source.chapters.forEach(c => c.segments.forEach((s, i) => (s.id = i))); // re-indekser defensivt
-        store.translations = obj.translations || {};
-        store.links = obj.links || {};
-        store.uncertain = obj.uncertain || {};
-        store.align = obj.align || {};
+        const norm = store.source ? normTables(obj, store.source.chapters.length, store.source.chapters) : { t: {}, l: {}, u: {}, a: {} };
+        store.translations = norm.t; store.links = norm.l; store.uncertain = norm.u; store.align = norm.a;
+        if (obj.settings && typeof obj.settings === "object") {       // kontekst følger med – aldri nøkler
+          if (typeof obj.settings.context === "string") store.settings.context = obj.settings.context;
+          if (typeof obj.settings.autoAlign === "boolean") store.settings.autoAlign = obj.settings.autoAlign;
+        }
+        resetAlignCaches();
         ci = 0; active = null; editingSeg = null;
         renderAll(); updateUncCount(); save(); closeOverlays();
-        alert("Sikkerhetskopi hentet inn.");
+        alert("Arbeidsfil hentet inn.");
       } catch (err) {
         store = JSON.parse(snapshot); ci = 0; renderAll(); updateUncCount();
-        alert("Klarte ikke å bruke sikkerhetskopien: " + err.message);
+        alert("Klarte ikke å bruke arbeidsfila: " + err.message);
       }
     };
     r.readAsText(f); e.target.value = "";
@@ -930,9 +1066,10 @@
     download("oversettelse-norsk.txt", out, "text/plain");
   };
   document.getElementById("clearAll").onclick = () => {
-    if (!confirm("Dette tømmer originalen og hele oversettelsen fra appen (nøklene dine beholdes). Ta gjerne sikkerhetskopi først. Fortsette?")) return;
+    if (!confirm("Dette tømmer originalen og hele oversettelsen fra appen (nøklene dine beholdes). Ta gjerne en arbeidsfil først. Fortsette?")) return;
     const keep = store.settings;
     store = freshStore(); store.settings = keep; store.seenHelp = true;
+    resetAlignCaches();
     ci = 0; active = null; editingSeg = null;
     save(); closeOverlays(); renderAll(); updateUncCount();
   };
@@ -969,7 +1106,7 @@
   // Lagre umiddelbart hvis siden lukkes (debounce-vinduet kan ellers svelge siste endring)
   window.addEventListener("beforeunload", () => {
     clearTimeout(saveTimer);
-    try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+    try { commitOpenEditor(); localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
   });
 
   // Enkel skjermleser-merking på modalene
@@ -978,6 +1115,7 @@
   // ---------- Start ----------
   try { renderAll(); }
   catch (err) {                              // skadet lagret tilstand skal ikke låse appen
+    try { localStorage.setItem(KEY + "-skadet", localStorage.getItem(KEY) || ""); } catch (e) {}  // ta vare på en kopi
     store.source = null; save();
     try { renderAll(); } catch (e2) {}
   }

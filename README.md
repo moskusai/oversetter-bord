@@ -23,9 +23,9 @@ sikkerhetskopi, hente fram igjen, og eksportere den ferdige norske teksten.
 Du kan koble til **Claude (Anthropic)**, **ChatGPT (OpenAI)** eller **Gemini
 (Google)** ved å legge inn din egen API-nøkkel under ⚙︎. Da kan appen:
 
-- **🔍 Slå opp ord** – sender setningen ordet står i (ikke mer).
-- **Koble ord automatisk** – sender ett avsnitt (engelsk + norsk) for å finne
-  hvilke ord som hører sammen.
+- **🔍 Slå opp ord** – sender avsnittet ordet står i (engelsk + din norske tekst).
+- **Koble ord automatisk** – når du klikker et ord, sendes det ene avsnittet
+  (engelsk + norsk) for å finne hvilke ord som hører sammen. Kan slås av under ⚙︎.
 - **🤖 Forbedre med AI / fordel kapittel** – sender **hele kapittelet** (engelsk
   + norsk) for å pusse på eller fordele oversettelsen.
 
