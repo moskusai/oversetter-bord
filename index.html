@@ -165,20 +165,21 @@
 <div class="overlay" id="menuOverlay">
   <div class="modal">
     <h3>Filer og lagring</h3>
-    <p class="sub">Arbeidet ditt lagres automatisk i nettleseren. Her laster du opp tekst og tar sikkerhetskopi.</p>
+    <p class="sub">Arbeidet ditt lagres <b>automatisk</b> i nettleseren mens du jobber. Her kan du laste opp tekst, ta sikkerhetskopi, og dele arbeidet med en annen.</p>
     <div style="display:flex;flex-direction:column;gap:10px">
       <button class="btn" id="uploadEn">📄 Last opp engelsk original (Word/tekst)</button>
       <button class="btn" id="uploadNo">🇳🇴 Last opp norsk oversettelse (Word/tekst)</button>
       <hr style="border:none;border-top:1px solid var(--line);margin:6px 0">
       <button class="btn" id="exportText">📄 Eksporter ferdig norsk tekst</button>
-      <button class="btn" id="exportJson">💾 Lagre sikkerhetskopi (fil)</button>
-      <button class="btn" id="importJson">📂 Hent sikkerhetskopi (fil)</button>
+      <button class="btn" id="exportJson">💾 Lagre / del arbeidsfil (alt du har gjort)</button>
+      <button class="btn" id="importJson">📂 Åpne en arbeidsfil (fra deg selv eller en annen)</button>
       <button class="btn danger" id="clearAll">🗑 Tøm og start på nytt</button>
       <input type="file" id="enFile" accept=".docx,.txt,.md,text/plain" style="display:none">
       <input type="file" id="noFile" accept=".docx,.txt,.md,text/plain" style="display:none">
       <input type="file" id="importFile" accept="application/json,.json" style="display:none">
     </div>
-    <p class="muted-note" id="menuStats" style="margin-top:14px"></p>
+    <p class="muted-note" style="margin-top:12px">💡 <b>Dele med en annen:</b> Trykk «💾 Lagre / del arbeidsfil» og send fila (e-post, melding e.l.). Den andre åpner appen på samme lenke og trykker «📂 Åpne en arbeidsfil» – da ser de alt du har gjort (original + oversettelse). Send den gjerne fram og tilbake når dere bytter på.</p>
+    <p class="muted-note" id="menuStats" style="margin-top:10px"></p>
     <div class="actions">
       <button class="btn" id="menuClose">Lukk</button>
     </div>
