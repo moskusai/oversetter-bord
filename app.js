@@ -362,10 +362,14 @@
       ph.onclick = () => { editingSeg = seg.id; renderChapter(); };
       card.appendChild(ph);
     }
-    const edit = document.createElement("button");
-    edit.className = "editbtn"; edit.textContent = "✎ rediger";
-    edit.onclick = (e) => { e.stopPropagation(); editingSeg = seg.id; renderChapter(); };
-    card.appendChild(edit);
+    const tools = document.createElement("div"); tools.className = "no-tools";
+    const mk = (label, title, fn) => { const b = document.createElement("button"); b.className = "tbtn"; b.textContent = label; b.title = title; b.onclick = (e) => { e.stopPropagation(); fn(); }; return b; };
+    tools.appendChild(mk("✎", "Rediger / lim inn norsk", () => { editingSeg = seg.id; renderChapter(); }));
+    if (PROSE.includes(seg.type)) {
+      tools.appendChild(mk("↧", "Sett inn tom linje her – skyver den norske teksten nedover (når norsk ligger ett hakk for høyt)", () => insertNoGap(seg.id)));
+      tools.appendChild(mk("🗑", "Fjern denne norske linja – skyver resten oppover (når det er ett avsnitt for mye)", () => deleteNoCell(seg.id)));
+    }
+    card.appendChild(tools);
     return card;
   }
   function commitEdit(segId, value) {
@@ -377,6 +381,31 @@
     }
     editingSeg = null; active = null; renderChapter();
   }
+  // ---------- Manuell justering (skyv norsk kolonne opp/ned) ----------
+  function proseSegs() { return chapter().segments.filter(s => PROSE.includes(s.type)); }
+  function clearChapterAlignMeta() {
+    delete store.links[ci];
+    if (store.uncertain[ci]) store.uncertain[ci] = store.uncertain[ci].filter(u => u.side !== "no");
+  }
+  function insertNoGap(segId) {                 // sett inn tom linje her -> skyv norsk nedover
+    const segs = proseSegs(), idx = segs.findIndex(s => s.id === segId);
+    if (idx < 0) return;
+    const texts = segs.map(s => getNo(s.id));
+    texts.splice(idx, 0, "");
+    const overflow = texts.pop();               // siste faller ut – ikke mist tekst
+    if (overflow) texts[texts.length - 1] = (texts[texts.length - 1] ? texts[texts.length - 1] + " " : "") + overflow;
+    segs.forEach((s, j) => setNo(s.id, texts[j]));
+    clearChapterAlignMeta(); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
+  }
+  function deleteNoCell(segId) {                 // fjern denne linja -> skyv norsk oppover
+    const segs = proseSegs(), idx = segs.findIndex(s => s.id === segId);
+    if (idx < 0) return;
+    const texts = segs.map(s => getNo(s.id));
+    texts.splice(idx, 1); texts.push("");
+    segs.forEach((s, j) => setNo(s.id, texts[j]));
+    clearChapterAlignMeta(); active = null; editingSeg = null; save(); renderChapter(); updateUncCount();
+  }
+
   function renderChapter() {
     const c = chapter();
     document.getElementById("enTitle").textContent = c.title;
@@ -456,6 +485,19 @@
     save(); renderChapter(); updateUncCount();
   };
   document.getElementById("abLookup").onclick = () => openLookup();
+  document.getElementById("abCopy").onclick = () => {
+    if (!active) return;
+    const seg = chapter().segments[active.segId];
+    const no = getNo(active.segId);
+    let txt = "Jeg oversetter en bok fra engelsk til norsk bokmål. Her er et avsnitt med original og forslag til oversettelse:\n\n" +
+      `ENGELSK:\n"${seg.en}"\n\nNORSK (forslag):\n"${no || "(ikke oversatt ennå)"}"\n`;
+    if (active.word) txt += `\nJeg er spesielt usikker på ordet «${active.word}».`;
+    copyText(txt).then(ok => {
+      const b = document.getElementById("abCopy"), o = b.textContent;
+      b.textContent = ok ? "✓ Kopiert!" : "Kunne ikke kopiere";
+      setTimeout(() => { b.textContent = o; }, 1500);
+    });
+  };
 
   // ---------- Oppslag via AI ----------
   function buildPrompts(ctx) {
