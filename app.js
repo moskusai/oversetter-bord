@@ -19,6 +19,7 @@
         keys: { anthropic: "", openai: "", gemini: "" },
         models: { anthropic: "claude-opus-4-8", openai: "gpt-4o", gemini: "gemini-2.0-flash" },
         autoAlign: true,
+        context: "Dette er en barnebok. Bruk et enkelt, varmt og naturlig norsk som er fint å lese høyt for barn, og behold meningen i originalen.",
       },
       lastChapter: 0, seenHelp: false,
     };
@@ -499,7 +500,7 @@
     if (!active) return;
     const seg = chapter().segments[active.segId];
     const no = getNo(active.segId);
-    let txt = "Jeg oversetter en bok fra engelsk til norsk bokmål. Her er et avsnitt med original og forslag til oversettelse:\n\n" +
+    let txt = aiContext() + "Jeg oversetter en bok fra engelsk til norsk bokmål. Her er et avsnitt med original og forslag til oversettelse:\n\n" +
       `ENGELSK:\n"${seg.en}"\n\nNORSK (forslag):\n"${no || "(ikke oversatt ennå)"}"\n`;
     if (active.word) txt += `\nJeg er spesielt usikker på ordet «${active.word}».`;
     copyText(txt).then(ok => {
@@ -510,10 +511,11 @@
   };
 
   // ---------- Oppslag via AI ----------
+  function aiContext() { const c = (store.settings.context || "").trim(); return c ? "Kontekst om boka: " + c + "\n\n" : ""; }
   function buildPrompts(ctx) {
     const sys = "Du er en erfaren oversetter som hjelper med å oversette en bok fra engelsk til norsk bokmål. " +
       "Svar bare med selve svaret på norsk, kort og oversiktlig. Ikke vis tankegang.";
-    let user = `Jeg oversetter denne engelske setningen:\n"${ctx.en}"\n\nJeg er usikker på ordet «${ctx.word}».\n\n`;
+    let user = aiContext() + `Jeg oversetter denne engelske setningen:\n"${ctx.en}"\n\nJeg er usikker på ordet «${ctx.word}».\n\n`;
     if (ctx.no) user += `Min norske oversettelse så langt:\n"${ctx.no}"\n\n`;
     user += "Gi meg:\n1) Hva «" + ctx.word + "» betyr her.\n2) 1–3 gode forslag til norsk oversettelse av ordet i denne sammenhengen.\n3) En kort merknad om nyanse eller valg.";
     if (ctx.no && ctx.side === "no") user += "\n4) Passer det norske ordet jeg har valgt? Hvis ikke, foreslå bedre.";
@@ -694,9 +696,9 @@
   function btnFlash(btn, ok) { const o = btn.textContent; btn.textContent = ok ? "✓ Kopiert!" : "Kunne ikke kopiere"; setTimeout(() => { btn.textContent = o; }, 1500); }
   function buildOptimizePrompt() {
     const bodies = chapterBodies();
-    const sys = "Du er en dyktig norsk oversetter som forbedrer oversettelser av en barnebibel. Svar bare med selve teksten, ingen forklaring.";
-    let user = "Nedenfor er et kapittel fra en barnebibel. For hvert avsnitt står den engelske originalen (EN) og en norsk oversettelse (NO).\n\n" +
-      "Forbedre den NORSKE oversettelsen så den blir naturlig, korrekt og fin å lese høyt for barn – behold betydningen og NØYAKTIG samme antall avsnitt.\n\n" +
+    const sys = "Du er en dyktig norsk oversetter som forbedrer en oversettelse. Svar bare med selve teksten, ingen forklaring.";
+    let user = aiContext() + "Nedenfor er et kapittel fra boka. For hvert avsnitt står den engelske originalen (EN) og en norsk oversettelse (NO).\n\n" +
+      "Forbedre den NORSKE oversettelsen så den blir naturlig, korrekt og god – behold betydningen og NØYAKTIG samme antall avsnitt.\n\n" +
       "Svar med KUN den forbedrede norske teksten: ett avsnitt om gangen, med én tom linje mellom hvert avsnitt, i samme rekkefølge. Ikke ta med engelsk, ingen avsnittsnummer, ikke noe annet.\n\n" +
       `=== ${chapter().title} ===\n\n`;
     bodies.forEach((s, i) => { user += `[${i + 1}]\nEN: ${s.en}\nNO: ${getNo(s.id) || "(mangler)"}\n\n`; });
@@ -786,6 +788,7 @@
     document.getElementById("openaiModel").value = s.models.openai || "";
     document.getElementById("geminiModel").value = s.models.gemini || "";
     document.getElementById("autoAlign").checked = s.autoAlign !== false;
+    document.getElementById("aiContext").value = s.context || "";
     openOverlay("settingsOverlay");
   };
   document.getElementById("settingsSave").onclick = () => {
@@ -798,6 +801,7 @@
     s.models.openai = document.getElementById("openaiModel").value.trim() || "gpt-4o";
     s.models.gemini = document.getElementById("geminiModel").value.trim() || "gemini-2.0-flash";
     s.autoAlign = document.getElementById("autoAlign").checked;
+    s.context = document.getElementById("aiContext").value;
     save(); closeOverlays();
   };
   document.getElementById("settingsCancel").onclick = closeOverlays;
@@ -827,7 +831,7 @@
   document.getElementById("uncCopy").onclick = () => {
     const items = allUncertain();
     if (!items.length) { alert("Ingen ord å kopiere ennå."); return; }
-    let txt = "Jeg oversetter en bok fra engelsk til norsk bokmål. Kan du sjekke disse ordene jeg er usikker på? For hvert ord: gi norsk oversettelse og en kort begrunnelse.\n\n";
+    let txt = aiContext() + "Jeg oversetter en bok fra engelsk til norsk bokmål. Kan du sjekke disse ordene jeg er usikker på? For hvert ord: gi norsk oversettelse og en kort begrunnelse.\n\n";
     items.forEach(({ c, k, u }, i) => {
       txt += `${i + 1}) Ord: «${u.word}»  (${c.title}, del ${k + 1})\n   Engelsk: "${u.en}"\n`;
       if (u.no) txt += `   Min norske tekst: "${u.no}"\n`;

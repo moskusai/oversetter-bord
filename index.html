@@ -70,6 +70,10 @@
     <h3>AI-innstillinger</h3>
     <p class="sub">Legg inn din egen nøkkel til minst én AI-tjeneste. Nøklene lagres <b>bare</b> i din egen nettleser (på denne maskinen). De brukes kun når du selv trykker på en AI-knapp: «Slå opp ord» sender setningen, ordkobling sender ett avsnitt, og «Forbedre med AI» sender <b>hele kapittelet</b> til den valgte tjenesten.</p>
 
+    <label>Kontekst om boka (følger med til AI-en)</label>
+    <textarea id="aiContext" style="min-height:64px" placeholder="F.eks: Dette er en barnebibel for små barn. Bruk enkelt, varmt språk som er fint å lese høyt. Behold bibelske navn."></textarea>
+    <p class="muted-note">Dette legges ved når AI-en sjekker ord, kobler ord eller forbedrer oversettelsen – og i tekst du kopierer til ChatGPT/Gemini/Claude.</p>
+
     <label>Hvilken AI vil du bruke som standard?</label>
     <select id="providerSelect">
       <option value="anthropic">Claude (Anthropic)</option>
