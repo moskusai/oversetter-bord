@@ -2,3 +2,6 @@
 # Opphavsrettsbeskyttet kildemateriale – holdes utenfor det som publiseres
 kilde/
 src/data.js
+
+# Local Netlify folder
+.netlify
