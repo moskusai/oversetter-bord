@@ -844,6 +844,22 @@
     });
   };
 
+  // ---------- Lagre nå ----------
+  const saveBtn = document.getElementById("saveBtn");
+  function saveNow() {
+    clearTimeout(saveTimer);
+    try {
+      localStorage.setItem(KEY, JSON.stringify(store)); saveWarned = false;
+      saveBtn.textContent = "✓ Lagret"; saveBtn.classList.add("ok");
+      setTimeout(() => { saveBtn.textContent = "💾 Lagre"; saveBtn.classList.remove("ok"); }, 1500);
+    } catch (e) {
+      saveBtn.textContent = "⚠ Lite plass";
+      setTimeout(() => { saveBtn.textContent = "💾 Lagre"; }, 2500);
+      alert("Obs: nettleseren har lite lagringsplass igjen. Ta en arbeidsfil under «≡ Fil → Lagre / del arbeidsfil» for å være helt trygg.");
+    }
+  }
+  saveBtn.onclick = saveNow;
+
   // ---------- Hjelp ----------
   document.getElementById("helpBtn").onclick = () => openOverlay("helpOverlay");
   document.getElementById("helpClose").onclick = closeOverlays;
@@ -927,6 +943,7 @@
   // Klikk på mørk bakgrunn lukker – men ikke oppslagsvinduet (så et AI-svar ikke mistes ved feilklikk)
   document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
   document.addEventListener("keydown", (e) => {
+    if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); saveNow(); return; }
     if (e.key === "Escape") { closeOverlays(); if (active) { active = null; updateHighlights(); } }
     if (editingSeg !== null || !hasSource()) return;
     if (e.key === "ArrowRight" && e.altKey) goto(ci + 1);
