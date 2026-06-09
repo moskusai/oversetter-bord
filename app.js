@@ -13,11 +13,12 @@
   function freshStore() {
     return {
       source: null,                 // { name, chapters:[{title,segments:[{id,type,en}]}] }
-      translations: {}, links: {}, uncertain: {},
+      translations: {}, links: {}, uncertain: {}, align: {},
       settings: {
         provider: "anthropic",
         keys: { anthropic: "", openai: "", gemini: "" },
         models: { anthropic: "claude-opus-4-8", openai: "gpt-4o", gemini: "gemini-2.0-flash" },
+        autoAlign: true,
       },
       lastChapter: 0, seenHelp: false,
     };
@@ -48,6 +49,8 @@
     store.translations = store.translations || {};
     store.links = store.links || {};
     store.uncertain = store.uncertain || {};
+    store.align = store.align || {};
+    if (store.settings.autoAlign == null) store.settings.autoAlign = true;
     if (store.lastChapter == null) store.lastChapter = 0;
   })();
 
@@ -82,6 +85,10 @@
     if (arr && arr.length) store.links[ci][segId] = arr; else delete store.links[ci][segId];
     save();
   }
+  // Auto-kobling fra AI (egen lagring så den ikke roter til de manuelle koblingene)
+  function getAlign(segId) { return store.align[ci] ? store.align[ci][segId] : undefined; }
+  function setAlign(segId, arr) { if (!store.align[ci]) store.align[ci] = {}; store.align[ci][segId] = arr || []; save(); }
+  function clearAlign(segId) { if (store.align[ci]) delete store.align[ci][segId]; }
 
   // ---------- Lese Word/tekst-filer ----------
   async function readDocxXml(buf) {
@@ -224,7 +231,7 @@
       const nSeg = chapters.reduce((a, c) => a + c.segments.length, 0);
       if (!nSeg) throw new Error("Fant ingen tekst i fila.");
       store.source = { name: file.name, chapters };
-      store.translations = {}; store.links = {}; store.uncertain = {};
+      store.translations = {}; store.links = {}; store.uncertain = {}; store.align = {};
       ci = 0; active = null; editingSeg = null;
       save(); closeOverlays(); renderAll(); updateUncCount();
     } catch (err) {
@@ -246,7 +253,7 @@
         (had ? "\n\nDette ERSTATTER den norske teksten som alt ligger der (ta gjerne sikkerhetskopi først)." : "") +
         "\n\nFortsette?";
       if (!confirm(msg)) return;
-      store.translations = {}; store.links = {}; store.uncertain = {};
+      store.translations = {}; store.links = {}; store.uncertain = {}; store.align = {};
       const n = Math.min(noChapters.length, enChapters.length);
       let filled = 0;
       for (let k = 0; k < n; k++) {
@@ -376,7 +383,7 @@
     const old = getNo(segId), v = value.trim();
     if (v !== old) {
       setNo(segId, v);
-      setSegLinks(segId, []);
+      setSegLinks(segId, []); clearAlign(segId);
       if (store.uncertain[ci]) { store.uncertain[ci] = store.uncertain[ci].filter(u => !(u.segId === segId && u.side === "no")); save(); }
     }
     editingSeg = null; active = null; renderChapter();
@@ -384,7 +391,7 @@
   // ---------- Manuell justering (skyv norsk kolonne opp/ned) ----------
   function proseSegs() { return chapter().segments.filter(s => PROSE.includes(s.type)); }
   function clearChapterAlignMeta() {
-    delete store.links[ci];
+    delete store.links[ci]; delete store.align[ci];
     if (store.uncertain[ci]) store.uncertain[ci] = store.uncertain[ci].filter(u => u.side !== "no");
   }
   function insertNoGap(segId) {                 // sett inn tom linje her -> skyv norsk nedover
@@ -435,11 +442,13 @@
     if (otherCard) otherCard.classList.add("seg-highlight");
     const aw = wordSpan(ownCard, active.wi); if (aw) aw.classList.add("w-active");
     let hasLink = false;
-    for (const pair of segLinks(active.segId)) {
+    const partners = segLinks(active.segId).concat(getAlign(active.segId) || []);
+    for (const pair of partners) {
       const mineWi = active.side === "en" ? pair[0] : pair[1];
       const theirWi = active.side === "en" ? pair[1] : pair[0];
-      if (mineWi === active.wi) { const ps = wordSpan(otherCard, theirWi); if (ps) ps.classList.add("w-linkhot"); hasLink = true; }
+      if (mineWi === active.wi) { const ps = wordSpan(otherCard, theirWi); if (ps) ps.classList.add("w-linkhot"); }
     }
+    hasLink = segLinks(active.segId).some(p => (active.side === "en" ? p[0] : p[1]) === active.wi);
     bar.classList.add("show");
     document.getElementById("abSel").innerHTML = `Valgt: <b>«${escapeHtml(active.word)}»</b> (${active.side === "en" ? "engelsk" : "norsk"})`;
     document.getElementById("abHint").textContent = active.side === "en"
@@ -463,6 +472,7 @@
       setSegLinks(segId, links); active = { segId, side, wi, word }; renderChapter(); return;
     }
     active = { segId, side, wi, word }; updateHighlights();
+    autoAlignIfNeeded(segId);
   });
   grid.addEventListener("dblclick", (e) => {
     const card = e.target.closest(".card.no"); if (!card) return;
@@ -550,6 +560,50 @@
     }
     throw new Error("Ukjent AI.");
   }
+
+  // ---------- Auto-kobling av ord (AI) ----------
+  const aligning = new Set(), triedAlign = new Set();
+  async function alignWords(prov, enText, noText) {
+    const enW = tokenize(enText).filter(t => t.w), noW = tokenize(noText).filter(t => t.w);
+    if (!enW.length || !noW.length) return [];
+    const enList = enW.map((t, i) => i + ":" + t.t).join("  ");
+    const noList = noW.map((t, i) => i + ":" + t.t).join("  ");
+    const sys = "Du kobler ord mellom en engelsk setning og dens norske oversettelse. Svar KUN med JSON, ingen forklaring.";
+    const user = `Engelske ord (indeks:ord):\n${enList}\n\nNorske ord (indeks:ord):\n${noList}\n\n` +
+      "For hvert engelske ord som har en tydelig motpart i den norske teksten, gi paret [engelskIndeks, norskIndeks]. " +
+      "Hopp over ord uten tydelig motpart. Svar KUN med en JSON-liste, f.eks. [[0,1],[2,0]].";
+    const resp = await callProvider(prov, sys, user, 700);
+    const m = resp && resp.match(/\[[\s\S]*\]/);
+    if (!m) return [];
+    let arr; try { arr = JSON.parse(m[0]); } catch (e) { return []; }
+    if (!Array.isArray(arr)) return [];
+    const out = [];
+    for (const p of arr) if (Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]) &&
+      p[0] >= 0 && p[0] < enW.length && p[1] >= 0 && p[1] < noW.length) out.push([p[0], p[1]]);
+    return out;
+  }
+  function autoAlignIfNeeded(segId) {
+    if (!store.settings.autoAlign) return;
+    const def = store.settings.provider;
+    if (!store.settings.keys[def]) return;
+    const seg = chapter().segments[segId];
+    if (!seg || !PROSE.includes(seg.type)) return;
+    const noText = getNo(segId);
+    if (!noText) return;
+    if (getAlign(segId) !== undefined || segLinks(segId).length) return;   // alt koblet/forsøkt
+    const tag = ci + ":" + segId;
+    if (aligning.has(tag) || triedAlign.has(tag)) return;
+    aligning.add(tag);
+    const myChapter = ci;
+    if (active && active.segId === segId) document.getElementById("abHint").textContent = "🔗 Kobler ord med AI …";
+    alignWords(def, seg.en, noText).then(pairs => {
+      aligning.delete(tag);
+      if (myChapter !== ci) return;
+      if (pairs.length) { setAlign(segId, pairs); renderChapter(); }
+      else { triedAlign.add(tag); if (active && active.segId === segId) updateHighlights(); }
+    }).catch(() => { aligning.delete(tag); triedAlign.add(tag); if (active && active.segId === segId) updateHighlights(); });
+  }
+
   function refreshLookupButtons() {
     ["anthropic", "openai", "gemini"].forEach(prov => {
       const btn = document.querySelector(`.lookup-providers .btn[data-prov="${prov}"]`);
@@ -625,7 +679,7 @@
   pasteText.addEventListener("input", updatePasteCount);
   document.getElementById("pasteApply").onclick = () => {
     const paras = pasteText.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
-    pasteTargets().forEach((seg, i) => { if (i < paras.length) { setNo(seg.id, paras[i]); setSegLinks(seg.id, []); } });
+    pasteTargets().forEach((seg, i) => { if (i < paras.length) { setNo(seg.id, paras[i]); setSegLinks(seg.id, []); clearAlign(seg.id); } });
     closeOverlays(); renderChapter();
   };
   document.getElementById("pasteCancel").onclick = closeOverlays;
@@ -648,7 +702,7 @@
     const paras = text.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
     const bodies = chapterBodies();
     const n = Math.min(paras.length, bodies.length);
-    for (let i = 0; i < n; i++) { setNo(bodies[i].id, paras[i]); setSegLinks(bodies[i].id, []); }
+    for (let i = 0; i < n; i++) { setNo(bodies[i].id, paras[i]); setSegLinks(bodies[i].id, []); clearAlign(bodies[i].id); }
     closeOverlays(); renderChapter();
     if (paras.length !== bodies.length)
       alert(`Satt inn ${n} avsnitt. AI-svaret hadde ${paras.length}, kapittelet har ${bodies.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
@@ -698,6 +752,7 @@
     document.getElementById("anthropicModel").value = s.models.anthropic || "claude-opus-4-8";
     document.getElementById("openaiModel").value = s.models.openai || "";
     document.getElementById("geminiModel").value = s.models.gemini || "";
+    document.getElementById("autoAlign").checked = s.autoAlign !== false;
     openOverlay("settingsOverlay");
   };
   document.getElementById("settingsSave").onclick = () => {
@@ -709,6 +764,7 @@
     s.models.anthropic = document.getElementById("anthropicModel").value;
     s.models.openai = document.getElementById("openaiModel").value.trim() || "gpt-4o";
     s.models.gemini = document.getElementById("geminiModel").value.trim() || "gemini-2.0-flash";
+    s.autoAlign = document.getElementById("autoAlign").checked;
     save(); closeOverlays();
   };
   document.getElementById("settingsCancel").onclick = closeOverlays;
@@ -775,7 +831,7 @@
   noFile.onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; handleNorwegianFile(f); };
 
   document.getElementById("exportJson").onclick = () => {
-    const blob = JSON.stringify({ source: store.source, translations: store.translations, links: store.links, uncertain: store.uncertain }, null, 2);
+    const blob = JSON.stringify({ source: store.source, translations: store.translations, links: store.links, uncertain: store.uncertain, align: store.align }, null, 2);
     download("oversettelse-sikkerhetskopi.json", blob, "application/json");
   };
   function validSource(src) {
@@ -800,6 +856,7 @@
         store.translations = obj.translations || {};
         store.links = obj.links || {};
         store.uncertain = obj.uncertain || {};
+        store.align = obj.align || {};
         ci = 0; active = null; editingSeg = null;
         renderAll(); updateUncCount(); save(); closeOverlays();
         alert("Sikkerhetskopi hentet inn.");
