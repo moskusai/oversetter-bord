@@ -18,22 +18,39 @@ oversettelsen skriver eller limer du inn til høyre, avsnitt for avsnitt.
 Alt lagres automatisk i din egen nettleser. Under «≡ Fil» kan du ta
 sikkerhetskopi, hente fram igjen, og eksportere den ferdige norske teksten.
 
-## Ordsjekk med AI (valgfritt)
+## AI-funksjoner (valgfritt – krever egen nøkkel)
 
-«🔍 Slå opp ord» kan spørre **Claude (Anthropic)**, **ChatGPT (OpenAI)** eller
-**Gemini (Google)** om ett og ett ord du er usikker på – aldri hele teksten. Du
-legger inn dine egne API-nøkler under ⚙︎; de lagres bare lokalt i nettleseren.
+Du kan koble til **Claude (Anthropic)**, **ChatGPT (OpenAI)** eller **Gemini
+(Google)** ved å legge inn din egen API-nøkkel under ⚙︎. Da kan appen:
 
-> **DeepL** kan dessverre ikke kobles direkte fra en nettleser-app (DeepL
-> blokkerer det). Det krever en liten ekstra hjelper som kjører ved siden av.
+- **🔍 Slå opp ord** – sender setningen ordet står i (ikke mer).
+- **Koble ord automatisk** – sender ett avsnitt (engelsk + norsk) for å finne
+  hvilke ord som hører sammen.
+- **🤖 Forbedre med AI / fordel kapittel** – sender **hele kapittelet** (engelsk
+  + norsk) for å pusse på eller fordele oversettelsen.
+
+Du velger selv om/når du bruker disse. Uten nøkkel kan du i stedet kopiere
+teksten og lime inn i en vanlig AI-chat.
+
+> **Hva sendes hvor:** Bare det du selv utløser med en AI-knapp sendes – til den
+> AI-tjenesten du har valgt, med din egen nøkkel. Resten av arbeidet skjer lokalt.
+>
+> **Nøkler:** API-nøkler lagres i nettleserens lagring (localStorage) på denne
+> maskinen. Det er greit for et personlig verktøy; del ikke maskinen/nettleseren
+> med andre du ikke stoler på mens nøklene ligger der.
+>
+> **DeepL** kan ikke kobles direkte fra en nettleser-app (DeepL blokkerer det).
 
 ## Personvern og innhold
 
 Appen er bare et verktøy – den inneholder **ingen bok**. Teksten du laster opp
-blir liggende kun i din egen nettleser og sendes ingen steder. (Last derfor ikke
-opp opphavsrettsbeskyttet materiale til en offentlig kopi du deler videre.)
+blir liggende kun i din egen nettleser. Den sendes ingen steder med mindre du
+selv trykker på en AI-knapp (se over). Last ikke opp opphavsrettsbeskyttet
+materiale til en offentlig kopi du deler videre.
 
 ---
 
-*Teknisk: ren HTML/CSS/JS uten avhengigheter eller byggesteg. Word-filer pakkes
-ut og leses direkte i nettleseren.*
+*Teknisk: ren HTML/CSS/JS uten avhengigheter eller byggesteg. Word-filer (.docx)
+pakkes ut og leses direkte i nettleseren – vanlig brødtekst og overskrifter leses
+godt, men tabeller, tekstbokser og fotnoter kan falle ut. Lim heller inn teksten
+hvis et dokument er spesielt komplisert.*

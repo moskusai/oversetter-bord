@@ -2,7 +2,7 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "barnebibel",
+      "name": "oversetter-bord",
       "runtimeExecutable": "python3",
       "runtimeArgs": ["-m", "http.server", "4178"],
       "port": 4178

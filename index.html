@@ -68,7 +68,7 @@
 <div class="overlay" id="settingsOverlay">
   <div class="modal">
     <h3>AI-innstillinger</h3>
-    <p class="sub">For å slå opp enkeltord trenger appen en nøkkel til minst én AI-tjeneste. Du legger inn dine egne nøkler – de lagres <b>bare</b> i din egen nettleser, og brukes bare når du trykker «Slå opp ord» (aldri på hele teksten).</p>
+    <p class="sub">Legg inn din egen nøkkel til minst én AI-tjeneste. Nøklene lagres <b>bare</b> i din egen nettleser (på denne maskinen). De brukes kun når du selv trykker på en AI-knapp: «Slå opp ord» sender setningen, ordkobling sender ett avsnitt, og «Forbedre med AI» sender <b>hele kapittelet</b> til den valgte tjenesten.</p>
 
     <label>Hvilken AI vil du bruke som standard?</label>
     <select id="providerSelect">
@@ -210,7 +210,8 @@
     <p class="muted-note" id="optCount"></p>
     <div class="actions">
       <button class="btn" id="optClose">Lukk</button>
-      <button class="btn primary" id="optApply">Sett inn forbedret norsk</button>
+      <button class="btn" id="optApply" title="Legger avsnittene rett på rad i brødteksten (uten AI)">Sett inn på rad</button>
+      <button class="btn primary" id="optApplyAI" title="Lar AI fordele teksten på riktig felt – også tittel, sitat og nøkkelpunkt">🤖 Sett inn med AI (fordeler riktig)</button>
     </div>
   </div>
 </div>

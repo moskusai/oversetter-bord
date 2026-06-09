@@ -537,10 +537,12 @@
       return (d.content || []).filter(b => b.type === "text").map(b => b.text).join("\n").trim();
     }
     if (prov === "openai") {
+      const body = { model: s.models.openai || "gpt-4o", messages: [{ role: "system", content: sys }, { role: "user", content: user }] };
+      if (maxTokens) body.max_completion_tokens = maxTokens;   // ny param som også nyere modeller godtar
       const res = await fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", "authorization": "Bearer " + s.keys.openai },
-        body: JSON.stringify({ model: s.models.openai || "gpt-4o", messages: [{ role: "system", content: sys }, { role: "user", content: user }] }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
@@ -548,10 +550,12 @@
     }
     if (prov === "gemini") {
       const model = s.models.gemini || "gemini-2.0-flash";
+      const body = { system_instruction: { parts: [{ text: sys }] }, contents: [{ parts: [{ text: user }] }] };
+      if (maxTokens) body.generationConfig = { maxOutputTokens: Math.min(maxTokens, 8192) };
       const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(s.keys.gemini)}`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ system_instruction: { parts: [{ text: sys }] }, contents: [{ parts: [{ text: user }] }] }),
+        body: JSON.stringify(body),
       });
       if (!res.ok) throw await errMsg(res);
       const d = await res.json();
@@ -707,6 +711,34 @@
     if (paras.length !== bodies.length)
       alert(`Satt inn ${n} avsnitt. AI-svaret hadde ${paras.length}, kapittelet har ${bodies.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
   }
+  async function distributeWithAI(pasted) {
+    if (!pasted.trim()) return;
+    const def = store.settings.provider;
+    if (!store.settings.keys[def]) { openOverlay("settingsOverlay"); return; }
+    const segs = chapter().segments;
+    const typeLabel = { title: "tittel", body: "brødtekst", quote: "sitat", section: "seksjon", note: "merknad", label: "overskrift", attribution: "kilde", source: "kilde" };
+    const list = segs.filter(s => s.en && s.en.trim()).map(s => `[${s.id}] (${typeLabel[s.type] || s.type}) ${s.en}`).join("\n");
+    const sys = "Du fordeler en ferdig norsk oversettelse på de riktige feltene i et kapittel. Svar KUN med gyldig JSON, ingen forklaring.";
+    const user = `Feltene i kapittelet (indeks, type, engelsk original):\n${list}\n\n` +
+      `Den norske oversettelsen av hele kapittelet:\n"""\n${pasted}\n"""\n\n` +
+      `Fordel den norske teksten på riktig felt ut fra mening og rekkefølge. Returner KUN et JSON-objekt {"indeks": "norsk tekst", ...} for de feltene som har en norsk motpart. Ikke ta med engelsk, ingen forklaring.`;
+    const count = document.getElementById("optCount");
+    count.textContent = "🤖 Fordeler teksten med AI …";
+    try {
+      const resp = await callProvider(def, sys, user, 16000);
+      const m = resp && resp.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("Fikk ikke et gyldig svar fra AI-en. Prøv igjen, eller bruk «Sett inn (på rad)».");
+      const obj = JSON.parse(m[0]);
+      let n = 0;
+      Object.keys(obj).forEach(k => {
+        const id = parseInt(k, 10), seg = segs.find(s => s.id === id);
+        if (seg && typeof obj[k] === "string" && obj[k].trim()) { setNo(seg.id, obj[k].trim()); setSegLinks(seg.id, []); clearAlign(seg.id); n++; }
+      });
+      closeOverlays(); renderChapter();
+      alert(`AI fordelte den norske teksten på ${n} felt i kapittelet. Sjekk gjerne gjennom.`);
+    } catch (err) { count.textContent = "Feil: " + err.message; }
+  }
+
   const optPaste = document.getElementById("optPaste");
   function updateOptCount() {
     const paras = optPaste.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
@@ -728,6 +760,7 @@
   document.getElementById("optCopyNo").onclick = (e) => { copyText(chapterProse().map(s => getNo(s.id) || "").join("\n\n").trim()).then(ok => btnFlash(e.target, ok)); };
   optPaste.addEventListener("input", updateOptCount);
   document.getElementById("optApply").onclick = () => { if (optPaste.value.trim()) applyOptimized(optPaste.value); else closeOverlays(); };
+  document.getElementById("optApplyAI").onclick = () => distributeWithAI(optPaste.value);
   document.getElementById("optClose").onclick = closeOverlays;
   document.getElementById("optFetch").onclick = async () => {
     const def = store.settings.provider;
@@ -917,6 +950,9 @@
     clearTimeout(saveTimer);
     try { localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
   });
+
+  // Enkel skjermleser-merking på modalene
+  document.querySelectorAll(".overlay .modal").forEach(m => { m.setAttribute("role", "dialog"); m.setAttribute("aria-modal", "true"); });
 
   // ---------- Start ----------
   try { renderAll(); }
