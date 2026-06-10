@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oversetter-bord</title>
-<link rel="stylesheet" href="styles.css?v=5">
+<link rel="stylesheet" href="styles.css?v=7">
 </head>
 <body>
 
@@ -17,6 +17,8 @@
   </div>
   <span class="progress" id="progress"></span>
   <div class="spacer"></div>
+  <span class="progress" id="cloudStatus" title="Status for skylagring"></span>
+  <button class="btn" id="accountBtn" style="display:none">👤 Logg inn</button>
   <button class="btn" id="saveBtn" title="Lagre nå (alt lagres ellers automatisk). Hurtigtast: Cmd/Ctrl+S">💾 Lagre</button>
   <button class="btn" id="uncertainBtn" title="Ord du har merket som usikre">❓ Usikre <span id="uncCount"></span></button>
   <button class="btn" id="helpBtn" title="Slik bruker du appen">?</button>
@@ -119,7 +121,11 @@
       <span>Koble ord automatisk med AI når jeg klikker et ord – så lyser det tilsvarende ordet opp på den andre siden (bruker valgt AI + nøkkel, én gang per avsnitt).</span>
     </label>
 
-    <p class="muted-note">💡 DeepL kan dessverre ikke kobles direkte til fra nettleseren (DeepL tillater det ikke). Du kan fortsatt lime inn tekst fra DeepL manuelt.</p>
+    <div class="prov-block">
+      <label>DeepL – API-nøkkel (for innebygd DeepL-oversettelse)</label>
+      <input type="password" id="deeplKey" placeholder="xxxxxxxx-xxxx-...:fx">
+      <p class="muted-note">Gratis nøkkel: deepl.com → «DeepL API» → Free-plan (500 000 tegn/mnd). Krever at du er innlogget (👤) når du oversetter.</p>
+    </div>
 
     <div class="actions">
       <button class="btn" id="settingsCancel">Avbryt</button>
@@ -214,9 +220,13 @@
       <button class="btn" id="optCopyEn">📋 Kopier kun engelsk</button>
       <button class="btn" id="optCopyNo">📋 Kopier kun norsk</button>
     </div>
-    <div id="optApiRow" style="margin-bottom:12px;display:none">
+    <div id="optApiRow" style="margin-bottom:6px;display:none">
       <button class="btn" id="optFetch">🤖 Eller hent forbedring direkte fra <span id="optProvName"></span></button>
       <span class="muted-note" id="optFetchStatus" style="margin-left:8px"></span>
+    </div>
+    <div id="optDeeplRow" style="margin-bottom:12px;display:none">
+      <button class="btn" id="optDeepl">🌐 Oversett kapittelet med DeepL</button>
+      <span class="muted-note" id="optDeeplStatus" style="margin-left:8px"></span>
     </div>
     <label>Lim inn den forbedrede norske teksten her</label>
     <textarea id="optPaste" placeholder="Lim inn AI-svaret …"></textarea>
@@ -225,6 +235,55 @@
       <button class="btn" id="optClose">Lukk</button>
       <button class="btn" id="optApply" title="Legger avsnittene rett på rad i brødteksten (uten AI)">Sett inn på rad</button>
       <button class="btn primary" id="optApplyAI" title="Lar AI fordele teksten på riktig felt – også tittel, sitat og nøkkelpunkt">🤖 Sett inn med AI (fordeler riktig)</button>
+    </div>
+  </div>
+</div>
+
+<!-- Konto og prosjekter -->
+<div class="overlay" id="accountOverlay">
+  <div class="modal">
+    <div id="accLoggedOut">
+      <h3>Logg inn</h3>
+      <p class="sub">Med en bruker lagres prosjektene dine i skyen, så du kan fortsette på en annen maskin – og bruke DeepL-oversettelse.</p>
+      <div class="acc-tabs">
+        <button class="btn" id="tabLogin">Logg inn</button>
+        <button class="btn" id="tabRegister">Ny bruker</button>
+      </div>
+      <div id="loginForm">
+        <label>E-post</label>
+        <input type="email" id="loginEmail" autocomplete="email">
+        <label>Passord</label>
+        <input type="password" id="loginPassword" autocomplete="current-password">
+      </div>
+      <div id="registerForm" style="display:none">
+        <label>Navn</label>
+        <input type="text" id="regName" autocomplete="name">
+        <label>E-post</label>
+        <input type="email" id="regEmail" autocomplete="email">
+        <label>Passord (minst 8 tegn)</label>
+        <input type="password" id="regPassword" autocomplete="new-password">
+        <label>Invitasjonskode</label>
+        <input type="text" id="regInvite" placeholder="Fikk du en kode sammen med lenken?">
+      </div>
+      <p class="muted-note" id="accError" style="color:#b5482a"></p>
+      <div class="actions">
+        <button class="btn" id="accCancel">Avbryt</button>
+        <button class="btn primary" id="accSubmit">Logg inn</button>
+      </div>
+    </div>
+    <div id="accLoggedIn" style="display:none">
+      <h3 id="accHello">Innlogget</h3>
+      <p class="sub">Prosjektene dine ligger trygt i skyen og følger deg på tvers av maskiner.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <button class="btn primary" id="projSaveAs">☁️ Lagre dette arbeidet som prosjekt</button>
+      </div>
+      <h3 style="font-size:16px;margin:14px 0 8px">Mine prosjekter</h3>
+      <div id="projList"></div>
+      <p class="muted-note" id="accError2" style="color:#b5482a"></p>
+      <div class="actions">
+        <button class="btn" id="accLogout">Logg ut</button>
+        <button class="btn" id="accClose">Lukk</button>
+      </div>
     </div>
   </div>
 </div>
@@ -243,6 +302,8 @@
       <p><b>❓ Usikker på et ord?</b> Klikk ordet → «Merk usikker». Alle merkede ord samles under «❓ Usikre». Derfra kan du kopiere dem til ChatGPT/Claude/Gemini, eller trykke «🔍 Slå opp ord» direkte (krever en nøkkel under ⚙︎). Knappen «📋 Kopier (m/ original)» kopierer både den engelske originalen og ditt norske forslag, klart til å lime inn i en AI-chat.</p>
       <p><b>🤖 Forbedre med AI:</b> Knappen over norsk-kolonnen åpner et vindu med tre veier: kopier kapittelet (engelsk + norsk, med ferdig instruks) og lim inn i ChatGPT/Gemini/Claude; hent forbedringen direkte (med nøkkel); eller lim AI-svaret tilbake – «Sett inn på rad», eller «Sett inn med AI» som fordeler teksten på riktig felt. Der kan du også kopiere kun engelsk eller kun norsk for hele kapittelet.</p>
       <p><b>💾 Trygt lagret:</b> Alt lagres automatisk. Under «≡ Fil» tar du en arbeidsfil (sikkerhetskopi/deling), henter den fram igjen, og eksporterer den ferdige norske teksten.</p>
+      <p><b>👤 Bruker og prosjekter:</b> Logg inn (øverst til høyre) for å lagre arbeidet som <b>prosjekter i skyen</b> – da kan du fortsette på en annen maskin, og se de siste prosjektene dine. Uten innlogging virker alt som før, lagret i nettleseren.</p>
+      <p><b>🌐 DeepL:</b> Innlogget kan du oversette et helt kapittel med DeepL fra «🤖 Forbedre med AI»-vinduet. Legg inn din egen DeepL-nøkkel under ⚙︎ (gratis hos deepl.com → «DeepL API»).</p>
       <p><b>⌨️ Snarveier:</b> Alt + ←/→ bytter kapittel · Cmd/Ctrl + S lagrer · Esc lukker. I skriveboksen: Cmd/Ctrl + Enter lagrer, Esc angrer.</p>
     </div>
     <div class="actions">
@@ -251,6 +312,6 @@
   </div>
 </div>
 
-<script src="app.js?v=5"></script>
+<script src="app.js?v=7"></script>
 </body>
 </html>

@@ -15,8 +15,25 @@ oversettelsen skriver eller limer du inn til høyre, avsnitt for avsnitt.
 4. **Usikker på et ord?** Klikk det og «Merk usikker». Samlede ord kan kopieres
    til ChatGPT/Claude/Gemini, eller slås opp direkte i appen med din egen nøkkel.
 
-Alt lagres automatisk i din egen nettleser. Under «≡ Fil» kan du ta
-sikkerhetskopi, hente fram igjen, og eksportere den ferdige norske teksten.
+Alt lagres automatisk i din egen nettleser. Under «≡ Fil» kan du ta en
+arbeidsfil (sikkerhetskopi/deling), hente den fram igjen, og eksportere den
+ferdige norske teksten.
+
+## Bruker og prosjekter i skyen (valgfritt)
+
+Logg inn med **👤-knappen** (krever invitasjonskode første gang) for å lagre
+arbeidet som **prosjekter i skyen**: da ser du de siste prosjektene dine, kan
+fortsette på en annen maskin, og endringer skylagres automatisk mens du jobber.
+Hver bruker ser kun sine egne prosjekter. Uten innlogging virker alt som før,
+lagret lokalt i nettleseren.
+
+## Innebygd DeepL (valgfritt)
+
+Innlogget kan du oversette et helt kapittel med **DeepL** fra
+«🤖 Forbedre med AI»-vinduet. Legg inn din egen DeepL-nøkkel under ⚙︎
+(gratis: deepl.com → «DeepL API» → Free-plan, 500 000 tegn/mnd). Nøkkelen
+lagres bare i din nettleser; appens tjener videresender bare forespørselen
+(DeepL tillater ikke direktekall fra nettlesere).
 
 ## AI-funksjoner (valgfritt – krever egen nøkkel)
 

@@ -154,6 +154,11 @@ button.btn:disabled, .no-tools .tbtn:disabled { opacity: .35; cursor: default; }
 .keyrow input { flex: 1; }
 .keyrow .eye { padding: 7px 10px; font-size: 14px; flex: none; }
 
+/* Konto og prosjekter */
+.acc-tabs { display: flex; gap: 8px; margin-bottom: 14px; }
+#projList .popen:disabled { opacity: .5; }
+#cloudStatus { font-size: 12px; color: var(--no); }
+
 /* ---------- Handlingslinje (nederst) ---------- */
 .actionbar {
   position: fixed; left: 50%; transform: translateX(-50%);

@@ -14,9 +14,10 @@
     return {
       source: null,                 // { name, chapters:[{title,segments:[{id,type,en}]}] }
       translations: {}, links: {}, uncertain: {}, align: {},
+      project: null,                // { id, name } når arbeidet er knyttet til et skyprosjekt
       settings: {
         provider: "anthropic",
-        keys: { anthropic: "", openai: "", gemini: "" },
+        keys: { anthropic: "", openai: "", gemini: "", deepl: "" },
         models: { anthropic: "claude-opus-4-8", openai: "gpt-4o", gemini: "gemini-2.0-flash" },
         autoAlign: true,
         context: "Dette er en barnebok. Bruk et enkelt, varmt og naturlig norsk som er fint å lese høyt for barn, og behold meningen i originalen.",
@@ -53,11 +54,12 @@
     store.uncertain = store.uncertain || {};
     store.align = store.align || {};
     if (store.settings.autoAlign == null) store.settings.autoAlign = true;
+    if (store.project === undefined) store.project = null;
     if (store.lastChapter == null) store.lastChapter = 0;
   })();
 
   let saveTimer = null, saveWarned = false;
-  function save() {
+  function save(markCloudDirty) {
     clearTimeout(saveTimer);
     saveTimer = setTimeout(() => {
       try { localStorage.setItem(KEY, JSON.stringify(store)); saveWarned = false; }
@@ -65,6 +67,7 @@
         if (!saveWarned) { saveWarned = true; alert("Obs: nettleseren har lite lagringsplass igjen. Ta en arbeidsfil under «≡ Fil» for å være trygg."); }
       }
     }, 200);
+    scheduleCloudSave(markCloudDirty !== false);   // skylagring (ren navigasjon merker ikke endring)
   }
 
   // ---------- Tilstand ----------
@@ -252,6 +255,7 @@
       if (!nSeg) throw new Error("Fant ingen tekst i fila.");
       store.source = { name: file.name, chapters };
       store.translations = {}; store.links = {}; store.uncertain = {}; store.align = {};
+      store.project = null; setCloudStatus(me ? "ikke lagret i skyen ennå" : "");   // ny bok = ikke samme skyprosjekt
       resetAlignCaches();
       ci = 0; active = null; editingSeg = null;
       save(); closeOverlays(); renderAll(); updateUncCount();
@@ -459,7 +463,7 @@
     grid.innerHTML = "";
     for (const seg of c.segments) { grid.appendChild(makeCard("en", seg)); grid.appendChild(makeCard("no", seg)); }
     updateHighlights(); updateProgress();
-    store.lastChapter = ci; save();
+    store.lastChapter = ci; save(false);        // navigasjon er ikke en innholdsendring
   }
 
   // ---------- Markering / kobling ----------
@@ -880,6 +884,8 @@
     row.style.display = hasKey ? "" : "none";
     document.getElementById("optProvName").textContent = PROV_NAME[def] || "";
     document.getElementById("optFetchStatus").textContent = "";
+    document.getElementById("optDeeplRow").style.display = cloudAvailable ? "" : "none";
+    document.getElementById("optDeeplStatus").textContent = "";
     openOverlay("optimizeOverlay");
   };
   document.getElementById("optCopyAI").onclick = (e) => { const { user } = buildOptimizePrompt(); copyText(user).then(ok => btnFlash(e.target, ok)); };
@@ -919,6 +925,7 @@
     document.getElementById("anthropicKey").value = s.keys.anthropic || "";
     document.getElementById("openaiKey").value = s.keys.openai || "";
     document.getElementById("geminiKey").value = s.keys.gemini || "";
+    document.getElementById("deeplKey").value = s.keys.deepl || "";
     // ukjent lagret modell (fra eldre versjon) legges til som eget valg så den ikke mistes
     const setSel = (id, val) => {
       const el = document.getElementById(id);
@@ -940,6 +947,7 @@
     s.keys.anthropic = document.getElementById("anthropicKey").value.trim();
     s.keys.openai = document.getElementById("openaiKey").value.trim();
     s.keys.gemini = document.getElementById("geminiKey").value.trim();
+    s.keys.deepl = document.getElementById("deeplKey").value.trim();
     s.models.anthropic = document.getElementById("anthropicModel").value;
     s.models.openai = document.getElementById("openaiModel").value.trim() || "gpt-4o";
     s.models.gemini = document.getElementById("geminiModel").value.trim() || "gemini-2.0-flash";
@@ -1009,6 +1017,7 @@
   function saveNow() {
     clearTimeout(saveTimer);
     commitOpenEditor();
+    if (me && store.project && hasSource()) cloudSaveNow();   // lagre i skyen samtidig
     try {
       localStorage.setItem(KEY, JSON.stringify(store)); saveWarned = false;
       saveBtn.textContent = "✓ Lagret"; saveBtn.classList.add("ok");
@@ -1044,13 +1053,35 @@
   enFile.onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; handleEnglishFile(f); };
   noFile.onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; handleNorwegianFile(f); };
 
-  document.getElementById("exportJson").onclick = () => {
-    const blob = JSON.stringify({
+  function workFileData() {                     // alt arbeidet – aldri nøkler
+    return {
       source: store.source, translations: store.translations, links: store.links,
       uncertain: store.uncertain, align: store.align,
-      settings: { context: store.settings.context, autoAlign: store.settings.autoAlign },  // aldri nøkler
-    }, null, 2);
-    download("arbeidsfil-oversettelse.json", blob, "application/json");
+      settings: { context: store.settings.context, autoAlign: store.settings.autoAlign },
+    };
+  }
+  function applyWorkData(obj) {                 // forutsetter at obj.source har passert validSource
+    store.source = obj.source || null;
+    if (store.source) store.source.chapters.forEach(c => {
+      c.title = typeof c.title === "string" ? c.title : "(uten tittel)";
+      c.segments = c.segments.filter(s => s && typeof s === "object");
+      c.segments.forEach((s, i) => {                                  // re-indekser + tving form defensivt
+        s.id = i;
+        s.en = typeof s.en === "string" ? s.en : "";
+        s.type = typeof s.type === "string" ? s.type : "body";
+      });
+    });
+    const norm = store.source ? normTables(obj, store.source.chapters.length, store.source.chapters) : { t: {}, l: {}, u: {}, a: {} };
+    store.translations = norm.t; store.links = norm.l; store.uncertain = norm.u; store.align = norm.a;
+    if (obj.settings && typeof obj.settings === "object") {           // kontekst følger med – aldri nøkler
+      if (typeof obj.settings.context === "string") store.settings.context = obj.settings.context;
+      if (typeof obj.settings.autoAlign === "boolean") store.settings.autoAlign = obj.settings.autoAlign;
+    }
+    resetAlignCaches();
+    ci = 0; active = null; editingSeg = null;
+  }
+  document.getElementById("exportJson").onclick = () => {
+    download("arbeidsfil-oversettelse.json", JSON.stringify(workFileData(), null, 2), "application/json");
   };
   function validSource(src) {
     if (src == null) return true;
@@ -1100,24 +1131,8 @@
       const snapshot = JSON.stringify(store);
       try { localStorage.setItem(KEY + "-forrige", snapshot); } catch (e) {}   // angre-kopi
       try {
-        store.source = obj.source || null;
-        if (store.source) store.source.chapters.forEach(c => {
-          c.title = typeof c.title === "string" ? c.title : "(uten tittel)";
-          c.segments = c.segments.filter(s => s && typeof s === "object");
-          c.segments.forEach((s, i) => {                                  // re-indekser + tving form defensivt
-            s.id = i;
-            s.en = typeof s.en === "string" ? s.en : "";
-            s.type = typeof s.type === "string" ? s.type : "body";
-          });
-        });
-        const norm = store.source ? normTables(obj, store.source.chapters.length, store.source.chapters) : { t: {}, l: {}, u: {}, a: {} };
-        store.translations = norm.t; store.links = norm.l; store.uncertain = norm.u; store.align = norm.a;
-        if (obj.settings && typeof obj.settings === "object") {       // kontekst følger med – aldri nøkler
-          if (typeof obj.settings.context === "string") store.settings.context = obj.settings.context;
-          if (typeof obj.settings.autoAlign === "boolean") store.settings.autoAlign = obj.settings.autoAlign;
-        }
-        resetAlignCaches();
-        ci = 0; active = null; editingSeg = null;
+        applyWorkData(obj);
+        store.project = null; setCloudStatus(me ? "ikke lagret i skyen ennå" : "");   // en arbeidsfil er ikke knyttet til et skyprosjekt
         renderAll(); updateUncCount(); save(); closeOverlays();
         alert("Arbeidsfil hentet inn.");
       } catch (err) {
@@ -1147,16 +1162,262 @@
     if (!confirm("Dette tømmer originalen og hele oversettelsen fra appen (nøklene dine beholdes). Ta gjerne en arbeidsfil først. Fortsette?")) return;
     const keep = store.settings;
     store = freshStore(); store.settings = keep; store.seenHelp = true;
+    setCloudStatus("");
     resetAlignCaches();
     ci = 0; active = null; editingSeg = null;
     save(); closeOverlays(); renderAll(); updateUncCount();
   };
 
+  // ---------- Sky: innlogging, prosjekter, DeepL ----------
+  let me = null, cloudAvailable = false, cloudTimer = null, cloudBusy = false, cloudDirty = false;
+  const $ = (id) => document.getElementById(id);
+
+  async function api(path, body) {
+    const res = await fetch(path, body === undefined
+      ? { method: "GET" }
+      : { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+    let d = null; try { d = await res.json(); } catch (e) {}
+    if (!res.ok || !d) {
+      const err = new Error((d && d.error) || "Fikk ikke kontakt med tjeneren – prøv igjen.");
+      err.data = d; err.status = res.status;
+      throw err;
+    }
+    return d;
+  }
+  function setMe(m) {
+    me = m;
+    $("accountBtn").textContent = m ? "👤 " + (m.name || "").split(" ")[0] : "👤 Logg inn";
+    setCloudStatus("");
+  }
+  function setCloudStatus(t) { $("cloudStatus").textContent = t; }
+  function progressSummary() {
+    if (!hasSource()) return "";
+    let done = 0, tot = 0;
+    store.source.chapters.forEach((c, k) => c.segments.forEach(s => {
+      if (PROSE.includes(s.type)) { tot++; if (store.translations[k] && store.translations[k][s.id]) done++; }
+    }));
+    return done + " / " + tot + " avsnitt";
+  }
+  function scheduleCloudSave(markDirty) {
+    if (!me || !store.project || !hasSource()) return;
+    if (markDirty !== false) cloudDirty = true;
+    if (!cloudDirty) return;                    // ren navigasjon skal ikke utløse skylagring
+    clearTimeout(cloudTimer);
+    cloudTimer = setTimeout(() => cloudSaveNow(), 4000);
+  }
+  async function cloudSaveNow(force) {
+    if (!me || !store.project || !hasSource() || !cloudDirty) return;
+    if (cloudBusy) { clearTimeout(cloudTimer); cloudTimer = setTimeout(() => cloudSaveNow(), 2000); return; }   // prøv igjen straks
+    const proj = store.project;                 // fang referansen – brukeren kan bytte prosjekt mens vi venter
+    cloudBusy = true; setCloudStatus("☁️ lagrer …");
+    try {
+      const d = await api("/api/projects", {
+        action: "save", id: proj.id || "", name: proj.name, data: workFileData(),
+        progress: progressSummary(), expectedUpdatedAt: proj.updatedAt || "", force: !!force,
+      });
+      if (store.project !== proj) return;       // prosjektet ble byttet underveis – forkast svaret
+      proj.id = d.id; proj.updatedAt = d.updatedAt; cloudDirty = false;
+      const kl = new Date().toLocaleTimeString("nb-NO", { hour: "2-digit", minute: "2-digit" });
+      setCloudStatus("☁️ lagret " + kl);
+    } catch (e) {
+      if (store.project !== proj) return;
+      if (e.data && e.data.conflict) {          // endret et annet sted (annen maskin/fane)
+        setCloudStatus("☁️ konflikt");
+        const hentNy = confirm("Dette prosjektet er endret et annet sted (kanskje en annen maskin eller fane).\n\n" +
+          "Trykk OK for å hente den nyeste versjonen fra skyen (det du har gjort her etter siste lagring går tapt).\n" +
+          "Trykk Avbryt for å overskrive skyen med det du har her.");
+        if (hentNy) { cloudBusy = false; await reloadProjectFromCloud(proj); return; }
+        cloudBusy = false; return cloudSaveNow(true);   // brukeren valgte å overskrive
+      }
+      setCloudStatus("☁️ får ikke lagret – prøver igjen");
+      clearTimeout(cloudTimer); cloudTimer = setTimeout(() => cloudSaveNow(), 30000);
+    }
+    finally { cloudBusy = false; if (cloudDirty && store.project === proj) scheduleCloudSave(false); }
+  }
+  async function reloadProjectFromCloud(proj) {
+    try {
+      const d = await api("/api/projects", { action: "load", id: proj.id });
+      if (!d.data || !d.data.source || !validSource(d.data.source)) throw new Error("Prosjektdataene ser skadet ut.");
+      applyWorkData(d.data);
+      store.project = { id: proj.id, name: d.name || proj.name, updatedAt: d.updatedAt };
+      cloudDirty = false;
+      renderAll(); updateUncCount(); save(false);
+      setCloudStatus("☁️ hentet nyeste versjon");
+    } catch (e) { setCloudStatus("☁️ " + e.message); }
+  }
+
+  // Konto-vindu
+  let accMode = "login";
+  function showAccount() {
+    $("accLoggedOut").style.display = me ? "none" : "";
+    $("accLoggedIn").style.display = me ? "" : "none";
+    $("accError").textContent = ""; $("accError2").textContent = "";
+    if (me) { $("accHello").textContent = "Innlogget som " + me.name; loadProjects(); }
+    openOverlay("accountOverlay");
+  }
+  function setAccMode(m) {
+    accMode = m;
+    $("loginForm").style.display = m === "login" ? "" : "none";
+    $("registerForm").style.display = m === "register" ? "" : "none";
+    $("accSubmit").textContent = m === "login" ? "Logg inn" : "Opprett bruker";
+    $("tabLogin").classList.toggle("primary", m === "login");
+    $("tabRegister").classList.toggle("primary", m === "register");
+  }
+  $("accountBtn").onclick = showAccount;
+  $("tabLogin").onclick = () => setAccMode("login");
+  $("tabRegister").onclick = () => setAccMode("register");
+  $("accCancel").onclick = closeOverlays;
+  $("accClose").onclick = closeOverlays;
+  $("accSubmit").onclick = async () => {
+    const err = $("accError"); err.textContent = "";
+    const btn = $("accSubmit"); if (btn.disabled) return; btn.disabled = true;
+    try {
+      const d = accMode === "login"
+        ? await api("/api/auth", { action: "login", email: $("loginEmail").value, password: $("loginPassword").value })
+        : await api("/api/auth", { action: "register", name: $("regName").value, email: $("regEmail").value, password: $("regPassword").value, invite: $("regInvite").value });
+      setMe({ name: d.name, email: d.email });
+      $("loginPassword").value = ""; $("regPassword").value = "";
+      showAccount();
+    } catch (e) { err.textContent = e.message; }
+    finally { btn.disabled = false; }
+  };
+  $("accLogout").onclick = async () => {
+    try { await api("/api/auth", { action: "logout" }); } catch (e) {}
+    setMe(null); showAccount();
+  };
+
+  // Prosjektliste
+  async function loadProjects() {
+    const wrap = $("projList"); wrap.innerHTML = '<p class="empty-hint">Henter …</p>';
+    try {
+      const d = await api("/api/projects");
+      wrap.innerHTML = "";
+      if (!d.projects.length) { wrap.innerHTML = '<p class="empty-hint">Ingen prosjekter ennå. Trykk «☁️ Lagre dette arbeidet som prosjekt» for å komme i gang.</p>'; return; }
+      d.projects.forEach(p => {
+        const row = document.createElement("div"); row.className = "uncertain-item";
+        const isOpen = store.project && store.project.id === p.id;
+        const when = p.updatedAt ? new Date(p.updatedAt).toLocaleString("nb-NO", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }) : "";
+        row.innerHTML = `<button class="rm" title="Slett prosjektet">✕</button>` +
+          `<button class="btn popen" style="float:right;margin-right:6px;font-size:12px;padding:3px 8px">${isOpen ? "Åpent nå" : "Åpne →"}</button>` +
+          `<span class="word">${escapeHtml(p.name)}</span>` +
+          `<div class="ctx">${escapeHtml(when)}${p.progress ? " · " + escapeHtml(p.progress) : ""}${isOpen ? " · dette er åpent nå" : ""}</div>`;
+        row.querySelector(".popen").disabled = !!isOpen;
+        row.querySelector(".popen").onclick = () => openProject(p);
+        row.querySelector(".rm").onclick = async () => {
+          if (!confirm(`Slette prosjektet «${p.name}» fra skyen? (Det som er åpent i appen beholdes.)`)) return;
+          try {
+            await api("/api/projects", { action: "delete", id: p.id });
+            if (store.project && store.project.id === p.id) { store.project = null; save(); }
+            loadProjects();
+          } catch (e) { $("accError2").textContent = e.message; }
+        };
+        wrap.appendChild(row);
+      });
+    } catch (e) { wrap.innerHTML = ""; $("accError2").textContent = e.message; }
+  }
+  async function openProject(p) {
+    if (hasSource() && (!store.project || store.project.id !== p.id)) {
+      if (!confirm(`Åpne «${p.name}»? Det som står i appen nå erstattes (ta gjerne en arbeidsfil først hvis det ikke er lagret som prosjekt).`)) return;
+    }
+    try {
+      // send eventuelle usendte endringer i gjeldende prosjekt FØR vi bytter
+      clearTimeout(cloudTimer);
+      if (me && store.project && cloudDirty && hasSource() && store.project.id !== p.id) {
+        setCloudStatus("☁️ lagrer det gamle først …");
+        await cloudSaveNow();
+      }
+      const d = await api("/api/projects", { action: "load", id: p.id });
+      if (!d.data || !d.data.source || !validSource(d.data.source)) throw new Error("Prosjektdataene ser skadet ut.");
+      try { localStorage.setItem(KEY + "-forrige", JSON.stringify(store)); } catch (e) {}
+      applyWorkData(d.data);
+      store.project = { id: p.id, name: d.name || p.name, updatedAt: d.updatedAt };
+      cloudDirty = false;
+      renderAll(); updateUncCount(); save(false); closeOverlays();
+      setCloudStatus("☁️ åpnet «" + truncate(store.project.name, 24) + "»");
+    } catch (e) { $("accError2").textContent = e.message; }
+  }
+  $("projSaveAs").onclick = async () => {
+    if (!hasSource()) { $("accError2").textContent = "Last opp en engelsk original først – så kan arbeidet lagres som prosjekt."; return; }
+    const def = (store.project && store.project.name) || (store.source.name || "Min bok").replace(/\.(docx|txt|md)$/i, "");
+    const raw = prompt("Hva skal prosjektet hete?", def);
+    if (raw === null) return;
+    const name = raw.trim() || def;
+    if (store.project && store.project.id) {
+      if (name !== store.project.name) {
+        // samme prosjekt med nytt navn, eller en ny kopi?
+        const giNyttNavn = confirm(`Trykk OK for å gi prosjektet nytt navn («${name}»).\nTrykk Avbryt for å lagre som et NYTT prosjekt i tillegg.`);
+        if (giNyttNavn) {
+          try { await api("/api/projects", { action: "rename", id: store.project.id, name }); store.project.name = name; }
+          catch (e) { $("accError2").textContent = e.message; return; }
+        } else {
+          store.project = { id: "", name };     // bevisst ny kopi
+        }
+      }
+    } else {
+      store.project = { id: "", name };
+    }
+    cloudDirty = true;
+    await cloudSaveNow();
+    save(false); loadProjects();
+  };
+
+  // DeepL-oversettelse av kapittelet (via tjeneren – DeepL blokkerer direktekall fra nettleser)
+  let deeplBusy = false;
+  $("optDeepl").onclick = async () => {
+    const status = $("optDeeplStatus");
+    if (!me) { status.textContent = "Logg inn først (👤 øverst til høyre) for å bruke DeepL."; return; }
+    if (deeplBusy) return;
+    deeplBusy = true; $("optDeepl").disabled = true;
+    status.textContent = "🌐 Oversetter med DeepL …";
+    const myChapter = ci;
+    try {
+      const texts = chapterBodies().map(s => s.en);
+      const d = await api("/api/deepl", { texts, deeplKey: store.settings.keys.deepl || "" });
+      if (ci !== myChapter) { status.textContent = "Kapittelet ble byttet mens DeepL jobbet – gå tilbake og prøv igjen."; return; }
+      optPaste.value = (d.translations || []).join("\n\n"); updateOptCount();
+      status.textContent = "Oversatt! Se gjennom og trykk «Sett inn på rad».";
+    } catch (e) { status.textContent = e.message; }
+    finally { deeplBusy = false; $("optDeepl").disabled = false; }
+  };
+
+  async function initCloud(attempt) {
+    if (!/^https?:$/.test(location.protocol)) return;
+    try {
+      const d = await api("/api/auth", { action: "me" });
+      cloudAvailable = true;
+      $("accountBtn").style.display = "";
+      if (d.ok) setMe({ name: d.name, email: d.email });
+      if (me && store.project && hasSource()) {
+        setCloudStatus("☁️ «" + truncate(store.project.name, 24) + "»");
+        checkCloudFreshness();                 // er det en nyere versjon i skyen (annen maskin)?
+      }
+    } catch (e) {
+      if (e.status === 404 || e.status === undefined && !(e instanceof TypeError)) {
+        // ser ut som ingen tjener (åpnet lokalt) – skjul sky-funksjonene stille
+        if (e.status === 404) return;
+      }
+      const n = (attempt || 0) + 1;
+      if (n <= 2) { setTimeout(() => initCloud(n), n * 3000); return; }   // nettglipp – prøv igjen
+      if (store.project && hasSource()) setCloudStatus("☁️ får ikke kontakt – lagres bare lokalt");
+    }
+  }
+  async function checkCloudFreshness() {
+    try {
+      const d = await api("/api/projects");
+      const p = d.projects.find(x => x.id === store.project.id);
+      if (p && store.project.updatedAt && p.updatedAt && p.updatedAt > store.project.updatedAt) {
+        if (confirm(`Prosjektet «${p.name}» er endret et annet sted siden sist (kanskje en annen maskin).\n\nHente den nyeste versjonen fra skyen?`)) {
+          await reloadProjectFromCloud(store.project);
+        }
+      }
+    } catch (e) { /* ikke kritisk */ }
+  }
+
   // ---------- Hjelpere ----------
   function openOverlay(id) { closeOverlays(); document.getElementById(id).classList.add("show"); }
   function closeOverlays() { document.querySelectorAll(".overlay.show").forEach(o => o.classList.remove("show")); }
-  // Klikk på mørk bakgrunn lukker – men ikke oppslag/innstillinger (så svar/nøkler ikke mistes ved feilklikk)
-  document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay" || o.id === "settingsOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
+  // Klikk på mørk bakgrunn lukker – men ikke oppslag/innstillinger/konto (så svar/nøkler/passord ikke mistes ved feilklikk)
+  document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay" || o.id === "settingsOverlay" || o.id === "accountOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
   // 👁-knapper: vis/skjul API-nøkler så man kan sjekke at limingen ble riktig
   document.querySelectorAll(".prov-block input[type=password]").forEach(inp => {
     const row = document.createElement("div"); row.className = "keyrow";
@@ -1170,6 +1431,7 @@
     if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); saveNow(); return; }
     if (e.key === "Escape") { closeOverlays(); if (active) { active = null; updateHighlights(); } }
     if (editingSeg !== null || !hasSource()) return;
+    if (document.querySelector(".overlay.show")) return;   // ikke bla kapitler mens et vindu er åpent
     if (e.key === "ArrowRight" && e.altKey) goto(ci + 1);
     if (e.key === "ArrowLeft" && e.altKey) goto(ci - 1);
   });
@@ -1194,6 +1456,22 @@
   window.addEventListener("beforeunload", () => {
     clearTimeout(saveTimer);
     try { commitOpenEditor(); localStorage.setItem(KEY, JSON.stringify(store)); } catch (e) {}
+    // siste skylagrings-forsøk – virker kun for små prosjekter (nettlesere avviser store keepalive-kropper),
+    // hovedvernet er visibilitychange-lagringen under
+    if (me && store.project && cloudDirty && hasSource()) {
+      try {
+        fetch("/api/projects", {
+          method: "POST", keepalive: true, headers: { "content-type": "application/json" },
+          body: JSON.stringify({ action: "save", id: store.project.id || "", name: store.project.name, data: workFileData(), progress: progressSummary(), expectedUpdatedAt: store.project.updatedAt || "" }),
+        });
+      } catch (e) {}
+    }
+  });
+  // Når fanen skjules (bytter fane, minimerer, lukker snart): lagre til skyen med vanlig fetch mens siden ennå lever
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden" && me && store.project && cloudDirty && hasSource()) {
+      commitOpenEditor(); clearTimeout(cloudTimer); cloudSaveNow();
+    }
   });
 
   // Enkel skjermleser-merking på modalene
@@ -1207,5 +1485,7 @@
     try { renderAll(); } catch (e2) {}
   }
   updateUncCount();
+  setAccMode("login");
+  initCloud();
   if (!store.seenHelp) { openOverlay("helpOverlay"); store.seenHelp = true; save(); }
 })();

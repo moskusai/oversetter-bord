@@ -5,3 +5,4 @@ src/data.js
 
 # Local Netlify folder
 .netlify
+node_modules/
