@@ -10,7 +10,7 @@ export default async (req) => {
     if (!process.env.SESSION_SECRET) return json(500, { error: "Tjeneren mangler oppsett (SESSION_SECRET)." });
     let body;
     try { body = await req.json(); } catch (e) { return json(400, { error: "Ugyldig forespørsel." }); }
-    const users = getStore("users");
+    const users = getStore({ name: "users", consistency: "strong" });
     const action = body.action;
 
     if (action === "register") {
@@ -48,7 +48,7 @@ export default async (req) => {
     if (action === "me") {
       const s = readSession(req);
       if (!s) return json(200, { ok: false });
-      const user = await getStore("users").get(userKey(s.email), { type: "json" });
+      const user = await getStore({ name: "users", consistency: "strong" }).get(userKey(s.email), { type: "json" });
       if (!user) return json(200, { ok: false });
       return json(200, { ok: true, name: user.name, email: user.email });
     }

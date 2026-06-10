@@ -12,8 +12,8 @@ export default async (req) => {
   try {
     const s = requireAuth(req);
     const uid = userKey(s.email);
-    const users = getStore("users");
-    const projects = getStore("projects");
+    const users = getStore({ name: "users", consistency: "strong" });
+    const projects = getStore({ name: "projects", consistency: "strong" });
     const user = await users.get(uid, { type: "json" });
     if (!user) return json(401, { error: "Du må være innlogget." });
     user.projects = user.projects || [];
