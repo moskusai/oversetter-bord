@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Oversetter-bord</title>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=5">
 </head>
 <body>
 
@@ -97,14 +97,21 @@
       <label>ChatGPT – API-nøkkel</label>
       <input type="password" id="openaiKey" placeholder="sk-...">
       <label>ChatGPT – modell</label>
-      <input type="text" id="openaiModel" placeholder="gpt-4o">
+      <select id="openaiModel">
+        <option value="gpt-4o">GPT-4o – rask og god</option>
+        <option value="gpt-5">GPT-5 – best kvalitet</option>
+      </select>
     </div>
 
     <div class="prov-block">
       <label>Gemini – API-nøkkel</label>
       <input type="password" id="geminiKey" placeholder="AIza...">
       <label>Gemini – modell</label>
-      <input type="text" id="geminiModel" placeholder="gemini-2.0-flash">
+      <select id="geminiModel">
+        <option value="gemini-2.0-flash">Gemini 2.0 Flash – rask</option>
+        <option value="gemini-2.5-flash">Gemini 2.5 Flash – rask og god</option>
+        <option value="gemini-2.5-pro">Gemini 2.5 Pro – best kvalitet</option>
+      </select>
     </div>
 
     <label style="display:flex;align-items:flex-start;gap:8px;font-weight:400;margin-top:16px;cursor:pointer">
@@ -235,7 +242,8 @@
       <p><b>↧ 🗑 Får du det ikke til å gå opp?</b> Hold musa over et norsk felt – da dukker små knapper opp. <b>↧</b> setter inn en tom linje og skyver den norske teksten nedover; <b>🗑</b> fjerner en linje og skyver oppover. Slik dytter du oversettelsen på plass når den har forskjøvet seg.</p>
       <p><b>❓ Usikker på et ord?</b> Klikk ordet → «Merk usikker». Alle merkede ord samles under «❓ Usikre». Derfra kan du kopiere dem til ChatGPT/Claude/Gemini, eller trykke «🔍 Slå opp ord» direkte (krever en nøkkel under ⚙︎). Knappen «📋 Kopier (m/ original)» kopierer både den engelske originalen og ditt norske forslag, klart til å lime inn i en AI-chat.</p>
       <p><b>🤖 Forbedre med AI:</b> Knappen over norsk-kolonnen åpner et vindu med tre veier: kopier kapittelet (engelsk + norsk, med ferdig instruks) og lim inn i ChatGPT/Gemini/Claude; hent forbedringen direkte (med nøkkel); eller lim AI-svaret tilbake – «Sett inn på rad», eller «Sett inn med AI» som fordeler teksten på riktig felt. Der kan du også kopiere kun engelsk eller kun norsk for hele kapittelet.</p>
-      <p><b>💾 Trygt lagret:</b> Under «≡ Fil» tar du sikkerhetskopi, henter fram igjen, og eksporterer den ferdige norske teksten.</p>
+      <p><b>💾 Trygt lagret:</b> Alt lagres automatisk. Under «≡ Fil» tar du en arbeidsfil (sikkerhetskopi/deling), henter den fram igjen, og eksporterer den ferdige norske teksten.</p>
+      <p><b>⌨️ Snarveier:</b> Alt + ←/→ bytter kapittel · Cmd/Ctrl + S lagrer · Esc lukker. I skriveboksen: Cmd/Ctrl + Enter lagrer, Esc angrer.</p>
     </div>
     <div class="actions">
       <button class="btn primary" id="helpClose">Skjønner!</button>
@@ -243,6 +251,6 @@
   </div>
 </div>
 
-<script src="app.js"></script>
+<script src="app.js?v=5"></script>
 </body>
 </html>

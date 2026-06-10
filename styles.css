@@ -146,6 +146,13 @@ textarea.editbox {
   border: 1px solid var(--line); background: #fff; cursor: pointer; color: var(--muted);
 }
 .no-tools .tbtn:hover { background: #faf7ef; border-color: #d8d2c5; color: var(--ink); }
+/* Berøringsskjerm har ingen hover – vis knappene alltid */
+@media (hover: none) { .no-tools { opacity: .85; } }
+
+button.btn:disabled, .no-tools .tbtn:disabled { opacity: .35; cursor: default; }
+.keyrow { display: flex; gap: 6px; align-items: center; }
+.keyrow input { flex: 1; }
+.keyrow .eye { padding: 7px 10px; font-size: 14px; flex: none; }
 
 /* ---------- Handlingslinje (nederst) ---------- */
 .actionbar {

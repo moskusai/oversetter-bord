@@ -236,10 +236,15 @@
   }
 
   // ---------- Opplasting ----------
+  function hasAnyWork() {
+    return Object.values(store.translations).some(t => t && Object.keys(t).length) ||
+      Object.values(store.uncertain).some(u => u && u.length) ||
+      Object.values(store.links).some(l => l && Object.keys(l).length);
+  }
   async function handleEnglishFile(file) {
     if (!file) return;
-    if (hasSource() && Object.keys(store.translations).length) {
-      if (!confirm("Dette erstatter originalen og fjerner den pågående oversettelsen. Ta gjerne en arbeidsfil først (≡ Fil). Vil du fortsette?")) return;
+    if (hasSource() && hasAnyWork()) {
+      if (!confirm("Dette erstatter originalen og fjerner den pågående oversettelsen (også merkede ord og koblinger). Ta gjerne en arbeidsfil først (≡ Fil). Vil du fortsette?")) return;
     }
     try {
       const chapters = await fileToChapters(file);
@@ -250,6 +255,10 @@
       resetAlignCaches();
       ci = 0; active = null; editingSeg = null;
       save(); closeOverlays(); renderAll(); updateUncCount();
+      let msg = `Lest inn «${file.name}»: ${chapters.length} kapitler, ${nSeg} avsnitt.`;
+      if (chapters.length === 1 && chapters[0].title === "Dokument")
+        msg += "\n\nFant ingen kapitteloverskrifter i fila, så alt ligger som ett kapittel. Hvis boka har kapitler, sjekk at overskriftene har overskrift-stil i Word.";
+      alert(msg);
     } catch (err) {
       alert("Klarte ikke å lese fila: " + err.message);
     }
@@ -367,7 +376,11 @@
       const cancel = document.createElement("button"); cancel.className = "btn"; cancel.textContent = "Angre endring";
       let done = false;
       const finish = (saveIt) => { if (done) return; done = true; if (saveIt) commitEdit(seg.id, ta.value); else { editingSeg = null; renderChapter(); } };
-      ok.onclick = () => finish(true);
+      // mousedown stjeler ellers fokus fra boksen FØR klikket – da ville blur-lagringen
+      // slå til først og «Angre endring» aldri få angret (Chrome/Edge)
+      ok.addEventListener("mousedown", (e) => { e.preventDefault(); finish(true); });
+      cancel.addEventListener("mousedown", (e) => { e.preventDefault(); finish(false); });
+      ok.onclick = () => finish(true);          // tastatur-fallback
       cancel.onclick = () => finish(false);
       ta.addEventListener("keydown", (e) => {
         if (e.key === "Escape") finish(false);
@@ -415,6 +428,7 @@
   function insertNoGap(segId) {                 // sett inn tom linje her -> skyv norsk nedover
     const segs = proseSegs(), idx = segs.findIndex(s => s.id === segId);
     if (idx < 0) return;
+    if (idx === segs.length - 1) { alert("Dette er siste avsnitt i kapittelet – det er ingenting å skyve nedover herfra."); return; }
     const texts = segs.map(s => getNo(s.id));
     texts.splice(idx, 0, "");
     const overflow = texts.pop();               // siste faller ut – ikke mist tekst
@@ -440,6 +454,8 @@
     const titleSeg = c.segments.find(s => s.type === "title");
     document.getElementById("noTitle").textContent = (titleSeg && getNo(titleSeg.id)) || "—";
     sel.value = ci;
+    document.getElementById("prevCh").disabled = ci === 0;
+    document.getElementById("nextCh").disabled = ci === store.source.chapters.length - 1;
     grid.innerHTML = "";
     for (const seg of c.segments) { grid.appendChild(makeCard("en", seg)); grid.appendChild(makeCard("no", seg)); }
     updateHighlights(); updateProgress();
@@ -472,8 +488,9 @@
     hasLink = partners.some(p => (active.side === "en" ? p[0] : p[1]) === active.wi);
     bar.classList.add("show");
     document.getElementById("abSel").innerHTML = `Valgt: <b>«${escapeHtml(active.word)}»</b> (${active.side === "en" ? "engelsk" : "norsk"})`;
-    document.getElementById("abHint").textContent = active.side === "en"
-      ? "Klikk et norsk ord i samme avsnitt for å koble dem."
+    document.getElementById("abHint").textContent =
+      (active.side === "en" && !getNo(active.segId)) ? "Skriv inn den norske oversettelsen først – da kan ordene kobles."
+      : active.side === "en" ? "Klikk et norsk ord i samme avsnitt for å koble dem."
       : "Klikk et engelsk ord i samme avsnitt for å koble dem.";
     document.getElementById("abUncertain").textContent = isUncertain(active) ? "✓ Usikker (fjern)" : "❓ Merk usikker";
     document.getElementById("abUnlink").style.display = hasLink ? "" : "none";
@@ -542,23 +559,39 @@
   function buildPrompts(ctx) {
     const sys = "Du er en erfaren oversetter som hjelper med å oversette en bok fra engelsk til norsk bokmål. " +
       "Svar bare med selve svaret på norsk, kort og oversiktlig. Ikke vis tankegang.";
-    let user = aiContext() + `Jeg oversetter denne engelske setningen:\n"${ctx.en}"\n\nJeg er usikker på ordet «${ctx.word}».\n\n`;
+    let user = aiContext() + `Jeg oversetter denne engelske teksten:\n"${ctx.en}"\n\n`;
     if (ctx.no) user += `Min norske oversettelse så langt:\n"${ctx.no}"\n\n`;
-    user += "Gi meg:\n1) Hva «" + ctx.word + "» betyr her.\n2) 1–3 gode forslag til norsk oversettelse av ordet i denne sammenhengen.\n3) En kort merknad om nyanse eller valg.";
-    if (ctx.no && ctx.side === "no") user += "\n4) Passer det norske ordet jeg har valgt? Hvis ikke, foreslå bedre.";
+    if (ctx.side === "no") {
+      user += `I den norske teksten har jeg brukt ordet «${ctx.word}», og jeg er usikker på det.\n\n` +
+        "Gi meg:\n1) Hvilket/hvilke engelske ord det svarer til her.\n2) Om det er et godt valg i denne sammenhengen.\n3) 1–3 alternative norske ord hvis det finnes bedre.";
+    } else {
+      user += `Jeg er usikker på det engelske ordet «${ctx.word}».\n\n` +
+        "Gi meg:\n1) Hva «" + ctx.word + "» betyr her.\n2) 1–3 gode forslag til norsk oversettelse av ordet i denne sammenhengen.\n3) En kort merknad om nyanse eller valg.";
+      if (ctx.no) user += "\n4) Har jeg alt truffet godt i min norske tekst? Hvis ikke, foreslå bedre.";
+    }
     return { sys, user };
   }
   async function errMsg(res) {
-    let m = "Feil " + res.status;
-    try { const j = await res.json(); m = (j.error && (j.error.message || j.error)) || m; } catch (e) {}
-    return new Error(typeof m === "string" ? m : JSON.stringify(m));
+    let raw = "";
+    try { const j = await res.json(); raw = (j.error && (j.error.message || j.error)) || ""; if (typeof raw !== "string") raw = JSON.stringify(raw); } catch (e) {}
+    const FRIENDLY = {
+      401: "Nøkkelen ser ut til å være feil eller utløpt – sjekk den under ⚙︎.",
+      403: "Nøkkelen har ikke tilgang – sjekk den under ⚙︎.",
+      404: "Fant ikke AI-modellen – sjekk modellnavnet under ⚙︎.",
+      429: "AI-tjenesten er opptatt akkurat nå – vent litt og prøv igjen.",
+    };
+    const base = FRIENDLY[res.status] || (res.status >= 500 ? "AI-tjenesten har trøbbel akkurat nå – prøv igjen om litt." : "Feil " + res.status + " fra AI-tjenesten.");
+    return new Error(base + (raw ? " (" + truncate(raw, 120) + ")" : ""));
+  }
+  function netFetch(url, opts) {                 // vennlig melding ved nettverksbrudd
+    return fetch(url, opts).catch(() => { throw new Error("Fikk ikke kontakt med AI-tjenesten – sjekk internettforbindelsen og prøv igjen."); });
   }
   let lastCallTruncated = false;   // satt av callProvider når svaret ble kuttet på token-taket
   async function callProvider(prov, sys, user, maxTokens) {
     const s = store.settings;
     lastCallTruncated = false;
     if (prov === "anthropic") {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
+      const res = await netFetch("https://api.anthropic.com/v1/messages", {
         method: "POST",
         headers: { "content-type": "application/json", "x-api-key": s.keys.anthropic, "anthropic-version": "2023-06-01", "anthropic-dangerous-direct-browser-access": "true" },
         body: JSON.stringify({ model: s.models.anthropic || "claude-opus-4-8", max_tokens: maxTokens || 800, system: sys, messages: [{ role: "user", content: user }] }),
@@ -573,7 +606,7 @@
       const body = { model, messages: [{ role: "system", content: sys }, { role: "user", content: user }] };
       // resonneringsmodeller bruker skjulte tenke-tokens av samme budsjett – gi romsligere tak
       if (maxTokens) body.max_completion_tokens = /^(o\d|gpt-5)/i.test(model) ? Math.max(maxTokens, 4000) : maxTokens;
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
+      const res = await netFetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: { "content-type": "application/json", "authorization": "Bearer " + s.keys.openai },
         body: JSON.stringify(body),
@@ -593,7 +626,7 @@
         const want = /gemini-(1\.|2\.0)/i.test(model) ? maxTokens : Math.max(maxTokens, 4000);
         body.generationConfig = { maxOutputTokens: Math.min(want, cap) };
       }
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
+      const res = await netFetch(`https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`, {
         method: "POST",
         headers: { "content-type": "application/json", "x-goog-api-key": s.keys.gemini },   // nøkkel i header, ikke i URL
         body: JSON.stringify(body),
@@ -617,19 +650,20 @@
     const sys = "Du kobler ord mellom en engelsk setning og dens norske oversettelse. Svar KUN med JSON, ingen forklaring.";
     const user = aiContext() + `Engelske ord (indeks:ord):\n${enList}\n\nNorske ord (indeks:ord):\n${noList}\n\n` +
       "For hvert engelske ord som har en tydelig motpart i den norske teksten, gi paret [engelskIndeks, norskIndeks]. " +
+      "Flere engelske ord kan peke på samme norske ord (sammensatte ord), og samme engelske ord kan peke på flere norske – ta med alle slike par. " +
       "Hopp over ord uten tydelig motpart. Svar KUN med en JSON-liste, f.eks. [[0,1],[2,0]].";
     const resp = await callProvider(prov, sys, user, Math.min(4000, 200 + enW.length * 12));   // skaler med avsnittslengde
     const m = resp && resp.match(/\[[\s\S]*\]/);
-    if (!m) return [];
+    if (!m) throw new Error("ugyldig svar");      // forbigående – ikke lås segmentet (catch cacher ikke)
     let arr;
     try { arr = JSON.parse(m[0]); }
     catch (e) {
       // avkuttet JSON? behold de hele parene fram til siste komplette
       const cut = m[0].lastIndexOf("],");
-      if (cut > 0) { try { arr = JSON.parse(m[0].slice(0, cut + 1) + "]"); } catch (e2) { return []; } }
-      else return [];
+      if (cut > 0) { try { arr = JSON.parse(m[0].slice(0, cut + 1) + "]"); } catch (e2) { throw new Error("ugyldig svar"); } }
+      else throw new Error("ugyldig svar");
     }
-    if (!Array.isArray(arr)) return [];
+    if (!Array.isArray(arr)) throw new Error("ugyldig svar");
     const out = [];
     for (const p of arr) if (Array.isArray(p) && p.length === 2 && Number.isInteger(p[0]) && Number.isInteger(p[1]) &&
       p[0] >= 0 && p[0] < enW.length && p[1] >= 0 && p[1] < noW.length) out.push([p[0], p[1]]);
@@ -682,8 +716,8 @@
     const loading = document.createElement("div"); loading.className = "lookup-result"; loading.textContent = "Henter svar fra " + PROV_NAME[prov] + " …";
     document.getElementById("lookupBody").appendChild(loading);
     try {
-      const text = await callProvider(prov, sys, user); loading.remove();
-      if (text) appendLookupResult(prov, text, false);
+      const text = await callProvider(prov, sys, user, 1500); loading.remove();
+      if (text) appendLookupResult(prov, text + (lastCallTruncated ? "\n\n(OBS: svaret ble kuttet – slutten kan mangle.)" : ""), false);
       else appendLookupResult(prov, "AI-en ga ikke noe svar denne gangen (kan skyldes innholdsfilter, eller at svaret ble for langt). Prøv igjen, en annen AI, eller bruk «❓ Usikre → Kopier».", true);
     }
     catch (err) { loading.remove(); appendLookupResult(prov, err.message + "\n\n(Sjekk nøkkel/modell under ⚙︎, eller bruk «❓ Usikre → Kopier» for å spørre i en vanlig chat.)", true); }
@@ -732,7 +766,8 @@
   const pasteText = document.getElementById("pasteText");
   document.getElementById("pasteChapter").onclick = () => {
     if (!pasteTargets().length) { alert("Dette kapittelet har ingen brødtekst-avsnitt å lime inn i – bla til et annet kapittel."); return; }
-    pasteText.value = ""; updatePasteCount(); openOverlay("pasteOverlay"); setTimeout(() => pasteText.focus(), 0);
+    // ikke kast tekst som alt står der (f.eks. etter feilklikk på bakgrunnen)
+    updatePasteCount(); openOverlay("pasteOverlay"); setTimeout(() => pasteText.focus(), 0);
   };
   function pasteTargets() { return chapter().segments.filter(s => s.type === "body"); }
   function updatePasteCount() {
@@ -743,8 +778,10 @@
   pasteText.addEventListener("input", updatePasteCount);
   document.getElementById("pasteApply").onclick = () => {
     const paras = pasteText.value.split(/\n\s*\n/).map(s => s.trim()).filter(Boolean);
+    if (!paras.length) { alert("Du har ikke limt inn noen tekst ennå."); return; }
     const targets = pasteTargets();
     targets.forEach((seg, i) => { if (i < paras.length) { setNo(seg.id, paras[i]); setSegLinks(seg.id, []); clearMetaAt(ci, seg.id); } });
+    pasteText.value = "";                       // nullstill først etter vellykket innsetting
     active = null; closeOverlays(); renderChapter(); updateUncCount();
     if (paras.length !== targets.length)
       alert(`Satt inn ${Math.min(paras.length, targets.length)} avsnitt. Du limte inn ${paras.length}, kapittelet har ${targets.length} brødtekst-avsnitt – sjekk gjerne at de står på rett plass (bruk ↧/🗑 ved behov).`);
@@ -757,10 +794,11 @@
   function btnFlash(btn, ok) { const o = btn.textContent; btn.textContent = ok ? "✓ Kopiert!" : "Kunne ikke kopiere"; setTimeout(() => { btn.textContent = o; }, 1500); }
   function buildOptimizePrompt() {
     const bodies = chapterBodies();
-    const sys = "Du er en dyktig norsk oversetter som forbedrer en oversettelse. Svar bare med selve teksten, ingen forklaring.";
+    const sys = "Du er en dyktig oversetter som forbedrer en oversettelse til norsk bokmål. Bruk konsekvent bokmål og norske anførselstegn («…»). Svar bare med selve teksten, ingen forklaring.";
     let user = aiContext() + "Nedenfor er et kapittel fra boka. For hvert avsnitt står den engelske originalen (EN) og en norsk oversettelse (NO).\n\n" +
-      "Forbedre den NORSKE oversettelsen så den blir naturlig, korrekt og god – behold betydningen og NØYAKTIG samme antall avsnitt.\n\n" +
-      "Svar med KUN den forbedrede norske teksten: ett avsnitt om gangen, med én tom linje mellom hvert avsnitt, i samme rekkefølge. Ikke ta med engelsk, ingen avsnittsnummer, ikke noe annet.\n\n" +
+      "Forbedre den NORSKE oversettelsen så den blir naturlig, korrekt og god – behold betydningen og NØYAKTIG samme antall avsnitt. " +
+      "Der NO står som (mangler), oversett den engelske originalen til norsk bokmål i stedet.\n\n" +
+      "Svar med KUN den norske teksten: ett avsnitt om gangen, med én tom linje mellom hvert avsnitt, i samme rekkefølge – alltid like mange avsnitt som det er nummererte blokker. Ikke ta med engelsk, ingen avsnittsnummer, ikke noe annet.\n\n" +
       `=== ${chapter().title} ===\n\n`;
     bodies.forEach((s, i) => { user += `[${i + 1}]\nEN: ${s.en}\nNO: ${getNo(s.id) || "(mangler)"}\n\n`; });
     return { sys, user, bodies };
@@ -785,14 +823,15 @@
       return;
     }
     // Bare felt som faktisk telles og eksporteres (PROSE) – ellers kan tekst "forsvinne" fra den ferdige boka
-    const myChapter = ci;
+    const myChapter = ci, mySource = store.source;
     const segs = chapter().segments.filter(s => PROSE.includes(s.type) && s.en && s.en.trim());
     const typeLabel = { title: "tittel", body: "brødtekst", quote: "sitat", section: "seksjon", note: "merknad" };
     const list = segs.map(s => `[${s.id}] (${typeLabel[s.type] || s.type}) ${s.en}`).join("\n");
     const sys = "Du fordeler en ferdig norsk oversettelse på de riktige feltene i et kapittel. Svar KUN med gyldig JSON, ingen forklaring.";
-    const user = `Feltene i kapittelet (indeks, type, engelsk original):\n${list}\n\n` +
+    const user = aiContext() + `Feltene i kapittelet (indeks, type, engelsk original):\n${list}\n\n` +
       `Den norske oversettelsen av hele kapittelet:\n"""\n${pasted}\n"""\n\n` +
-      `Fordel den norske teksten på riktig felt ut fra mening og rekkefølge. Returner KUN et JSON-objekt {"indeks": "norsk tekst", ...} for de feltene som har en norsk motpart. Ikke ta med engelsk, ingen forklaring.`;
+      `Fordel den norske teksten på riktig felt ut fra mening og rekkefølge. Bruk teksten ORDRETT – ikke endre, forkort eller omskriv noe. ` +
+      `Returner KUN et JSON-objekt der nøklene er tallene i klammene, f.eks. {"0": "Norsk tittel", "2": "Første avsnitt …"}. Ikke ta med engelsk, ingen forklaring.`;
     distributing = true;
     const aiBtn = document.getElementById("optApplyAI"), rowBtn = document.getElementById("optApply");
     aiBtn.disabled = true; rowBtn.disabled = true;
@@ -805,6 +844,7 @@
       let obj;
       try { obj = JSON.parse(m[0]); }
       catch (e) { throw new Error("Fikk ikke et gyldig svar fra AI-en. Prøv igjen, eller bruk «Sett inn på rad»."); }
+      if (store.source !== mySource) throw new Error("Dokumentet ble byttet mens AI-en jobbet – svaret er forkastet.");   // ny original/arbeidsfil/tømt underveis
       let n = 0;
       Object.keys(obj).forEach(k => {
         const id = parseInt(k, 10), seg = segs.find(s => s.id === id);
@@ -843,8 +883,9 @@
     openOverlay("optimizeOverlay");
   };
   document.getElementById("optCopyAI").onclick = (e) => { const { user } = buildOptimizePrompt(); copyText(user).then(ok => btnFlash(e.target, ok)); };
-  document.getElementById("optCopyEn").onclick = (e) => { copyText(chapterProse().map(s => s.en).join("\n\n")).then(ok => btnFlash(e.target, ok)); };
-  document.getElementById("optCopyNo").onclick = (e) => { copyText(chapterProse().map(s => getNo(s.id) || "").join("\n\n").trim()).then(ok => btnFlash(e.target, ok)); };
+  // Brødtekst, samme som «Sett inn på rad» – ellers forskyver tittel/sitat alt ved retur-liming
+  document.getElementById("optCopyEn").onclick = (e) => { copyText(chapterBodies().map(s => s.en).join("\n\n")).then(ok => btnFlash(e.target, ok)); };
+  document.getElementById("optCopyNo").onclick = (e) => { copyText(chapterBodies().map(s => getNo(s.id) || "").join("\n\n").trim()).then(ok => btnFlash(e.target, ok)); };
   optPaste.addEventListener("input", updateOptCount);
   document.getElementById("optApply").onclick = () => { if (optPaste.value.trim()) applyOptimized(optPaste.value); else closeOverlays(); };
   document.getElementById("optApplyAI").onclick = () => distributeWithAI(optPaste.value);
@@ -878,9 +919,17 @@
     document.getElementById("anthropicKey").value = s.keys.anthropic || "";
     document.getElementById("openaiKey").value = s.keys.openai || "";
     document.getElementById("geminiKey").value = s.keys.gemini || "";
-    document.getElementById("anthropicModel").value = s.models.anthropic || "claude-opus-4-8";
-    document.getElementById("openaiModel").value = s.models.openai || "";
-    document.getElementById("geminiModel").value = s.models.gemini || "";
+    // ukjent lagret modell (fra eldre versjon) legges til som eget valg så den ikke mistes
+    const setSel = (id, val) => {
+      const el = document.getElementById(id);
+      if (val && ![...el.options].some(o => o.value === val)) {
+        const o = document.createElement("option"); o.value = val; o.textContent = val; el.appendChild(o);
+      }
+      el.value = val || el.options[0].value;
+    };
+    setSel("anthropicModel", s.models.anthropic || "claude-opus-4-8");
+    setSel("openaiModel", s.models.openai || "gpt-4o");
+    setSel("geminiModel", s.models.gemini || "gemini-2.0-flash");
     document.getElementById("autoAlign").checked = s.autoAlign !== false;
     document.getElementById("aiContext").value = s.context || "";
     openOverlay("settingsOverlay");
@@ -914,10 +963,19 @@
     if (!items.length) { wrap.innerHTML = '<p class="empty-hint">Ingen ord merket ennå. Klikk et ord i teksten og velg «Merk usikker».</p>'; return; }
     items.forEach(({ c, k, u, idx }) => {
       const d = document.createElement("div"); d.className = "uncertain-item";
-      d.innerHTML = `<button class="rm" title="Fjern">✕</button><span class="word">${escapeHtml(u.word)}</span> ` +
+      d.innerHTML = `<button class="rm" title="Fjern">✕</button>` +
+        `<button class="btn goto" style="float:right;margin-right:6px;font-size:12px;padding:3px 8px">Gå til →</button>` +
+        `<span class="word">${escapeHtml(u.word)}</span> ` +
         `<span style="color:var(--muted);font-size:13px">– ${escapeHtml(c.title)} (kap. ${k + 1})</span>` +
         `<div class="ctx">EN: ${escapeHtml(truncate(u.en, 120))}</div>` + (u.no ? `<div class="ctx">NO: ${escapeHtml(truncate(u.no, 120))}</div>` : "");
       d.querySelector(".rm").onclick = () => { store.uncertain[k].splice(idx, 1); save(); renderUncertain(); updateUncCount(); if (k === ci) renderChapter(); };
+      d.querySelector(".goto").onclick = () => {     // hopp rett til ordet i teksten
+        closeOverlays(); goto(k);
+        active = { segId: u.segId, side: u.side, wi: u.wi, word: u.word };
+        updateHighlights();
+        const card = findCard(u.side, u.segId);
+        if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+      };
       wrap.appendChild(d);
     });
   }
@@ -1032,13 +1090,26 @@
     r.onload = () => {
       let obj;
       try { obj = JSON.parse(r.result); } catch (err) { alert("Klarte ikke å lese fila: ugyldig format."); return; }
-      if (!obj || typeof obj !== "object" || !validSource(obj.source)) {
-        alert("Arbeidsfila ser skadet ut (mangler gyldig dokumentstruktur). Ingen endring gjort."); return;
+      // Må faktisk være en arbeidsfil fra denne appen – ellers kunne en hvilken som helst
+      // JSON-fil «importeres» og nullstille alt arbeid
+      if (!obj || typeof obj !== "object" || !("source" in obj) || !obj.source || !validSource(obj.source)) {
+        alert("Dette ser ikke ut som en arbeidsfil fra denne appen. Ingen endring gjort."); return;
       }
+      const hasWork = hasSource() && Object.values(store.translations).some(t => t && Object.keys(t).length);
+      if (hasWork && !confirm("Dette erstatter dokumentet og oversettelsen som ligger her med innholdet i arbeidsfila. Fortsette?")) return;
       const snapshot = JSON.stringify(store);
+      try { localStorage.setItem(KEY + "-forrige", snapshot); } catch (e) {}   // angre-kopi
       try {
         store.source = obj.source || null;
-        if (store.source) store.source.chapters.forEach(c => c.segments.forEach((s, i) => (s.id = i))); // re-indekser defensivt
+        if (store.source) store.source.chapters.forEach(c => {
+          c.title = typeof c.title === "string" ? c.title : "(uten tittel)";
+          c.segments = c.segments.filter(s => s && typeof s === "object");
+          c.segments.forEach((s, i) => {                                  // re-indekser + tving form defensivt
+            s.id = i;
+            s.en = typeof s.en === "string" ? s.en : "";
+            s.type = typeof s.type === "string" ? s.type : "body";
+          });
+        });
         const norm = store.source ? normTables(obj, store.source.chapters.length, store.source.chapters) : { t: {}, l: {}, u: {}, a: {} };
         store.translations = norm.t; store.links = norm.l; store.uncertain = norm.u; store.align = norm.a;
         if (obj.settings && typeof obj.settings === "object") {       // kontekst følger med – aldri nøkler
@@ -1058,12 +1129,19 @@
   };
   document.getElementById("exportText").onclick = () => {
     if (!hasSource()) { alert("Last opp en original først."); return; }
-    let out = (store.source.name || "Oversettelse") + "\n\n";
+    let out = (store.source.name || "Oversettelse") + "\n\n", missing = 0;
     store.source.chapters.forEach((c, k) => {
       out += "\n========== " + (k + 1) + ". " + c.title + " ==========\n\n";
-      c.segments.forEach(s => { if (!PROSE.includes(s.type)) return; const no = (store.translations[k] && store.translations[k][s.id]) || ""; out += (no || "[mangler oversettelse]") + "\n\n"; });
+      c.segments.forEach(s => {
+        const no = (store.translations[k] && store.translations[k][s.id]) || "";
+        if (!PROSE.includes(s.type) && !no) return;   // ikke-PROSE tas med kun når de faktisk er oversatt
+        if (!no) missing++;
+        out += (no || "[mangler oversettelse]") + "\n\n";
+      });
     });
-    download("oversettelse-norsk.txt", out, "text/plain");
+    const docName = (store.source.name || "oversettelse").replace(/\.(docx|txt|md)$/i, "");
+    download(docName + " – norsk.txt", out, "text/plain");
+    alert(missing ? `Eksportert. Obs: ${missing} avsnitt mangler oversettelse og er merket [mangler oversettelse] i fila.` : "Eksportert – alle avsnitt er oversatt.");
   };
   document.getElementById("clearAll").onclick = () => {
     if (!confirm("Dette tømmer originalen og hele oversettelsen fra appen (nøklene dine beholdes). Ta gjerne en arbeidsfil først. Fortsette?")) return;
@@ -1077,8 +1155,17 @@
   // ---------- Hjelpere ----------
   function openOverlay(id) { closeOverlays(); document.getElementById(id).classList.add("show"); }
   function closeOverlays() { document.querySelectorAll(".overlay.show").forEach(o => o.classList.remove("show")); }
-  // Klikk på mørk bakgrunn lukker – men ikke oppslagsvinduet (så et AI-svar ikke mistes ved feilklikk)
-  document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
+  // Klikk på mørk bakgrunn lukker – men ikke oppslag/innstillinger (så svar/nøkler ikke mistes ved feilklikk)
+  document.querySelectorAll(".overlay").forEach(o => { if (o.id === "lookupOverlay" || o.id === "settingsOverlay") return; o.addEventListener("click", (e) => { if (e.target === o) closeOverlays(); }); });
+  // 👁-knapper: vis/skjul API-nøkler så man kan sjekke at limingen ble riktig
+  document.querySelectorAll(".prov-block input[type=password]").forEach(inp => {
+    const row = document.createElement("div"); row.className = "keyrow";
+    inp.parentNode.insertBefore(row, inp); row.appendChild(inp);
+    const eye = document.createElement("button");
+    eye.type = "button"; eye.textContent = "👁"; eye.className = "btn eye"; eye.title = "Vis/skjul nøkkelen";
+    eye.onclick = () => { inp.type = inp.type === "password" ? "text" : "password"; };
+    row.appendChild(eye);
+  });
   document.addEventListener("keydown", (e) => {
     if ((e.metaKey || e.ctrlKey) && (e.key === "s" || e.key === "S")) { e.preventDefault(); saveNow(); return; }
     if (e.key === "Escape") { closeOverlays(); if (active) { active = null; updateHighlights(); } }
